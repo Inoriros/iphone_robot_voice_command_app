@@ -16,12 +16,17 @@ struct ContentView: View {
         !trimmedCommand.isEmpty && !jetsonIP.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var canSendControlCommand: Bool {
+        !jetsonIP.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     connectionSection
                     statusSection
+                    stopControlsSection
                     commandSection
                     feedbackSection
                 }
@@ -171,6 +176,50 @@ struct ContentView: View {
         }
     }
 
+    private var stopControlsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Task Controls")
+                .font(.headline)
+
+            Grid(horizontalSpacing: 12, verticalSpacing: 12) {
+                GridRow {
+                    Button(role: .destructive) {
+                        sendControlCommand(AppConfig.stopCurrentTaskCommand)
+                    } label: {
+                        Label("Stop Task", systemImage: "stop.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .disabled(!canSendControlCommand)
+
+                    Button(role: .destructive) {
+                        sendControlCommand(AppConfig.stopCurrentSubtaskCommand)
+                    } label: {
+                        Label("Stop Subtask", systemImage: "stop.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .disabled(!canSendControlCommand)
+                }
+
+                GridRow {
+                    Button {
+                        sendControlCommand(AppConfig.pauseCurrentSubtaskCommand)
+                    } label: {
+                        Label("Pause Subtask", systemImage: "pause.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .disabled(!canSendControlCommand)
+                    .gridCellColumns(2)
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private var feedbackSection: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -251,6 +300,12 @@ struct ContentView: View {
 
     private func clampedProgress(_ progress: Double) -> Double {
         min(max(progress, 0), 1)
+    }
+
+    private func sendControlCommand(_ text: String) {
+        speech.stopRecording()
+        commandText = text
+        robot.sendCommand(ip: jetsonIP, token: token, text: text)
     }
 
     private func formattedTimestamp(_ timestamp: Double) -> String {

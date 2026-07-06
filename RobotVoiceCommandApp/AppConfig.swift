@@ -7,4 +7,7 @@ enum AppConfig {
     static let commandPath = "/command"
     static let statusPath = "/status"
     static let commandSource = "iphone"
+    static let stopCurrentTaskCommand = "STOP_CURRENT_TASK"
+    static let stopCurrentSubtaskCommand = "STOP_CURRENT_SUBTASK"
+    static let pauseCurrentSubtaskCommand = "PAUSE_CURRENT_SUBTASK"
 }

@@ -117,6 +117,16 @@ The iPhone app should use the Jetson's Wi-Fi IP address, for example:
 
 The app never auto-sends partial speech recognition results. Commands are only sent after the user taps **Send**.
 
+The app also has fixed task-control buttons:
+
+```text
+Stop Task       sends STOP_CURRENT_TASK
+Stop Subtask    sends STOP_CURRENT_SUBTASK
+Pause Subtask   sends PAUSE_CURRENT_SUBTASK
+```
+
+The Jetson bridge forwards these as normal command payloads on `/current_subtask`. Robot-side code should treat stop messages as high-priority stop requests and pause messages as subtask pause requests.
+
 ## Network API
 
 The iPhone sends commands to:
@@ -130,6 +140,32 @@ Request body:
 ```json
 {
   "text": "start exploration and find the elevator",
+  "token": "change_this_token",
+  "source": "iphone"
+}
+```
+
+Fixed stop command request bodies use the same endpoint and token:
+
+```json
+{
+  "text": "STOP_CURRENT_TASK",
+  "token": "change_this_token",
+  "source": "iphone"
+}
+```
+
+```json
+{
+  "text": "STOP_CURRENT_SUBTASK",
+  "token": "change_this_token",
+  "source": "iphone"
+}
+```
+
+```json
+{
+  "text": "PAUSE_CURRENT_SUBTASK",
   "token": "change_this_token",
   "source": "iphone"
 }
@@ -228,4 +264,3 @@ curl -X POST http://localhost:8080/mock_status \
 This app is for high-level task commands, not emergency control.
 
 Keep emergency stop, joystick override, and obstacle avoidance independent from this app. Add robot-side command validation before using it around people or valuable equipment.
-

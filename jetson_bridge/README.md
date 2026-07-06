@@ -55,6 +55,16 @@ On the Jetson, check the ROS topic:
 ros2 topic echo /current_subtask
 ```
 
+The iPhone task-control buttons send these exact command texts through the same `/command` endpoint:
+
+```text
+STOP_CURRENT_TASK
+STOP_CURRENT_SUBTASK
+PAUSE_CURRENT_SUBTASK
+```
+
+Robot-side consumers of `/current_subtask` should handle stop messages as high-priority stop requests and pause messages as subtask pause requests.
+
 Publish fake status:
 
 ```bash
@@ -72,4 +82,3 @@ python3 robot_bridge.py
 ```
 
 In this mode `/command` accepts commands but does not publish to ROS.
-
