@@ -1,0 +1,211 @@
+import Foundation
+
+@MainActor
+final class RobotClient: ObservableObject {
+    @Published var connectionState = "Disconnected"
+    @Published var currentStatusText = "No status received yet"
+    @Published var lastStatus: RobotStatus?
+    @Published var lastError: String?
+    @Published var lastCommandMessage: String?
+    @Published var lastCommandSendSucceeded = false
+
+    private var webSocketTask: URLSessionWebSocketTask?
+    private let jsonDecoder = JSONDecoder()
+    private let jsonEncoder = JSONEncoder()
+
+    func sendCommand(ip: String, token: String, text: String) {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedIP = normalizedHost(from: ip)
+
+        lastError = nil
+        lastCommandMessage = nil
+        lastCommandSendSucceeded = false
+
+        guard !trimmedIP.isEmpty else {
+            lastError = "Jetson IP is required."
+            return
+        }
+
+        guard !trimmedText.isEmpty else {
+            lastError = "Empty or invalid command."
+            return
+        }
+
+        guard let url = commandURL(ip: trimmedIP) else {
+            lastError = "Jetson IP is invalid."
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 8
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            let body = CommandRequest(text: trimmedText, token: token, source: AppConfig.commandSource)
+            request.httpBody = try jsonEncoder.encode(body)
+        } catch {
+            lastError = "Could not encode command: \(error.localizedDescription)"
+            return
+        }
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+
+                if let error {
+                    self.lastError = "Cannot reach Jetson at \(trimmedIP):\(AppConfig.defaultPort). \(error.localizedDescription)"
+                    self.lastCommandSendSucceeded = false
+                    return
+                }
+
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    self.lastError = "Jetson returned an invalid response."
+                    self.lastCommandSendSucceeded = false
+                    return
+                }
+
+                switch httpResponse.statusCode {
+                case 200:
+                    self.lastCommandSendSucceeded = true
+                    if let data, let response = try? self.jsonDecoder.decode(CommandResponse.self, from: data), response.ok {
+                        self.lastCommandMessage = "Command sent: \(response.text ?? trimmedText)"
+                    } else {
+                        self.lastCommandMessage = "Command sent."
+                    }
+                case 400:
+                    self.lastError = "Empty or invalid command."
+                    self.lastCommandSendSucceeded = false
+                case 401:
+                    self.lastError = "Invalid token. Please check the token on the Jetson bridge."
+                    self.lastCommandSendSucceeded = false
+                default:
+                    let serverMessage = data.flatMap { String(data: $0, encoding: .utf8) }
+                    self.lastError = serverMessage?.isEmpty == false
+                        ? "Jetson returned HTTP \(httpResponse.statusCode): \(serverMessage!)"
+                        : "Jetson returned HTTP \(httpResponse.statusCode)."
+                    self.lastCommandSendSucceeded = false
+                }
+            }
+        }.resume()
+    }
+
+    func connectStatusWebSocket(ip: String) {
+        let trimmedIP = normalizedHost(from: ip)
+
+        lastError = nil
+
+        guard !trimmedIP.isEmpty else {
+            connectionState = "Error"
+            lastError = "Jetson IP is required."
+            return
+        }
+
+        guard let url = statusURL(ip: trimmedIP) else {
+            connectionState = "Error"
+            lastError = "Jetson IP is invalid."
+            return
+        }
+
+        disconnectStatusWebSocket(updateState: false)
+        connectionState = "Connecting"
+
+        let task = URLSession.shared.webSocketTask(with: url)
+        webSocketTask = task
+        task.resume()
+
+        connectionState = "Connected"
+        receiveStatusMessage()
+    }
+
+    func disconnectStatusWebSocket() {
+        disconnectStatusWebSocket(updateState: true)
+    }
+
+    private func disconnectStatusWebSocket(updateState: Bool) {
+        webSocketTask?.cancel(with: .normalClosure, reason: nil)
+        webSocketTask = nil
+
+        if updateState {
+            connectionState = "Disconnected"
+        }
+    }
+
+    private func receiveStatusMessage() {
+        guard let webSocketTask else { return }
+
+        webSocketTask.receive { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+
+                switch result {
+                case .success(let message):
+                    self.connectionState = "Connected"
+                    self.handle(message)
+                    self.receiveStatusMessage()
+                case .failure(let error):
+                    self.connectionState = "Disconnected"
+                    self.lastError = "Status stream disconnected. Tap Reconnect. \(error.localizedDescription)"
+                    self.webSocketTask = nil
+                }
+            }
+        }
+    }
+
+    private func handle(_ message: URLSessionWebSocketTask.Message) {
+        switch message {
+        case .string(let text):
+            handleStatusText(text)
+        case .data(let data):
+            if let text = String(data: data, encoding: .utf8) {
+                handleStatusText(text)
+            } else {
+                currentStatusText = "Received binary status message."
+                lastStatus = nil
+            }
+        @unknown default:
+            currentStatusText = "Received unsupported status message."
+            lastStatus = nil
+        }
+    }
+
+    private func handleStatusText(_ text: String) {
+        guard let data = text.data(using: .utf8),
+              let status = try? jsonDecoder.decode(RobotStatus.self, from: data) else {
+            lastStatus = nil
+            currentStatusText = text
+            return
+        }
+
+        lastStatus = status
+        currentStatusText = status.displayText
+    }
+
+    private func commandURL(ip: String) -> URL? {
+        URL(string: "http://\(ip):\(AppConfig.defaultPort)\(AppConfig.commandPath)")
+    }
+
+    private func statusURL(ip: String) -> URL? {
+        URL(string: "ws://\(ip):\(AppConfig.defaultPort)\(AppConfig.statusPath)")
+    }
+
+    private func normalizedHost(from input: String) -> String {
+        let hostWithOptionalPort = input
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "http://", with: "")
+            .replacingOccurrences(of: "https://", with: "")
+            .replacingOccurrences(of: "ws://", with: "")
+            .replacingOccurrences(of: "wss://", with: "")
+            .split(separator: "/")
+            .first
+            .map(String.init) ?? ""
+
+        if hostWithOptionalPort.contains(":"),
+           !hostWithOptionalPort.hasPrefix("["),
+           let host = hostWithOptionalPort.split(separator: ":").first {
+            return String(host)
+        }
+
+        return hostWithOptionalPort
+    }
+}
