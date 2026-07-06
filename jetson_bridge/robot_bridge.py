@@ -15,12 +15,13 @@ from pydantic import BaseModel, Field
 try:
     import rclpy
     from rclpy.node import Node
-    from std_msgs.msg import String
+    from std_msgs.msg import Bool, String
 
     ROS_AVAILABLE = True
 except ImportError:
     rclpy = None
     Node = object
+    Bool = None
     String = None
     ROS_AVAILABLE = False
 
@@ -32,13 +33,26 @@ logging.basicConfig(
 logger = logging.getLogger("robot_bridge")
 
 
-COMMAND_TOPIC = os.getenv("ROBOT_COMMAND_TOPIC", "/current_subtask")
-STATUS_TOPIC = os.getenv("ROBOT_STATUS_TOPIC", "/task_status")
-AUTH_TOKEN = os.getenv("ROBOT_BRIDGE_TOKEN", "change_this_token")
+TASK_TOPIC = os.getenv("ROBOT_TASK_TOPIC", os.getenv("ROBOT_COMMAND_TOPIC", "/scenario"))
+CONTROL_TOPIC = os.getenv("ROBOT_CONTROL_TOPIC", "/task_control")
+CURRENT_SUBTASK_TOPIC = os.getenv("ROBOT_CURRENT_SUBTASK_TOPIC", "/current_subtask")
+START_EXPLORATION_TOPIC = os.getenv("ROBOT_START_EXPLORATION_TOPIC", "/start_exploration")
+SUBTASK_STATUS_TOPIC = os.getenv("ROBOT_SUBTASK_STATUS_TOPIC", "/subtask_status")
+TASK_PLANNING_TOPIC = os.getenv("ROBOT_TASK_PLANNING_TOPIC", "/task_planning")
+SIM_CONTROL_TOPIC = os.getenv("ROBOT_SIM_CONTROL_TOPIC", "/sim_control")
+LEGACY_STATUS_TOPIC = os.getenv("ROBOT_STATUS_TOPIC", "/task_status")
+AUTH_TOKEN = os.getenv("ROBOT_BRIDGE_TOKEN", "2001")
 ALLOW_NO_ROS = os.getenv("ROBOT_BRIDGE_ALLOW_NO_ROS", "false").lower() in {
     "1",
     "true",
     "yes",
+}
+
+CONTROL_COMMANDS = {
+    "STOP_CURRENT_TASK",
+    "STOP_CURRENT_SUBTASK",
+    "PAUSE_CURRENT_SUBTASK",
+    "RESUME_CURRENT_SUBTASK",
 }
 
 
@@ -51,6 +65,7 @@ class CommandRequest(BaseModel):
 class CommandResponse(BaseModel):
     ok: bool
     published_topic: Optional[str] = None
+    command_type: str = "task"
     text: Optional[str] = None
 
 
@@ -100,27 +115,94 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
         super().__init__("iphone_robot_voice_command_bridge")
         self._state = state
         self._sockets = sockets
-        self._publisher = self.create_publisher(String, COMMAND_TOPIC, 10)
-        self.create_subscription(String, STATUS_TOPIC, self._handle_status, 10)
+        self._task_pub = self.create_publisher(String, TASK_TOPIC, 10)
+        self._control_pub = self.create_publisher(String, CONTROL_TOPIC, 10)
+        self._current_subtask_pub = self.create_publisher(String, CURRENT_SUBTASK_TOPIC, 10)
+        self._start_exploration_pub = self.create_publisher(Bool, START_EXPLORATION_TOPIC, 10)
+
+        for topic in dict.fromkeys(
+            [
+                CURRENT_SUBTASK_TOPIC,
+                SUBTASK_STATUS_TOPIC,
+                TASK_PLANNING_TOPIC,
+                SIM_CONTROL_TOPIC,
+                LEGACY_STATUS_TOPIC,
+            ]
+        ):
+            self.create_subscription(
+                String,
+                topic,
+                lambda message, topic=topic: self._handle_status(topic, message),
+                10,
+            )
+
         self.get_logger().info(
-            f"bridge ready: publishing {COMMAND_TOPIC}, listening {STATUS_TOPIC}"
+            "bridge ready: "
+            f"tasks -> {TASK_TOPIC}, controls -> {CONTROL_TOPIC}, "
+            f"status <- {CURRENT_SUBTASK_TOPIC}, {SUBTASK_STATUS_TOPIC}, "
+            f"{TASK_PLANNING_TOPIC}, {SIM_CONTROL_TOPIC}"
         )
 
-    def publish_command(self, command_text: str, source: str) -> None:
+    def publish_task(self, command_text: str, source: str) -> None:
+        message = String()
+        message.data = command_text
+        self._task_pub.publish(message)
+        self._state.latest_command_text = command_text
+        self.get_logger().info(
+            f"published iPhone task to {TASK_TOPIC} from {source}: {command_text}"
+        )
+
+    def publish_control(self, command_text: str, source: str) -> None:
+        command_name = command_text.strip().upper()
         payload = {
-            "skill": "voice_command",
-            "text": command_text,
+            "command": command_name,
             "source": source,
             "timestamp": time.time(),
         }
+
         message = String()
         message.data = json.dumps(payload, separators=(",", ":"))
-        self._publisher.publish(message)
-        self._state.latest_command_text = command_text
-        self.get_logger().info(f"published command to {COMMAND_TOPIC}: {command_text}")
+        self._control_pub.publish(message)
+        self._state.latest_command_text = command_name
 
-    def _handle_status(self, message: Any) -> None:
-        status_text = str(message.data)
+        # Fallback for currently deployed nodes: publishing a non-active skill to
+        # /current_subtask preempts subtask_manager and VLM guidance consumers,
+        # while /start_exploration=false directly stops TARE exploration.
+        if command_name in {
+            "STOP_CURRENT_TASK",
+            "STOP_CURRENT_SUBTASK",
+            "PAUSE_CURRENT_SUBTASK",
+        }:
+            self._current_subtask_pub.publish(self._control_as_subtask(command_name, source))
+            self._start_exploration_pub.publish(Bool(data=False))
+
+        self.get_logger().warning(
+            f"published iPhone control to {CONTROL_TOPIC}: {command_name}"
+        )
+
+    @staticmethod
+    def _control_as_subtask(command_name: str, source: str) -> Any:
+        if command_name == "STOP_CURRENT_TASK":
+            skill = "cancelled"
+        elif command_name == "PAUSE_CURRENT_SUBTASK":
+            skill = "paused"
+        else:
+            skill = "manual_stop_subtask"
+
+        message = String()
+        message.data = json.dumps(
+            {
+                "skill": skill,
+                "instruction": f"{command_name} from {source}",
+                "target": "",
+                "source": source,
+            },
+            separators=(",", ":"),
+        )
+        return message
+
+    def _handle_status(self, topic: str, message: Any) -> None:
+        status_text = self._status_payload(topic, str(message.data))
         self._state.latest_status_text = status_text
 
         if self._state.loop is None:
@@ -131,6 +213,31 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             self._sockets.broadcast_text(status_text),
             self._state.loop,
         )
+
+    @staticmethod
+    def _status_payload(topic: str, text: str) -> str:
+        payload: Dict[str, Any] = {
+            "topic": topic,
+            "timestamp": time.time(),
+        }
+
+        if topic == CURRENT_SUBTASK_TOPIC:
+            payload["type"] = "current_subtask"
+        elif topic == SUBTASK_STATUS_TOPIC:
+            payload["type"] = "subtask_status"
+        elif topic == TASK_PLANNING_TOPIC:
+            payload["type"] = "task_plan"
+        elif topic == SIM_CONTROL_TOPIC:
+            payload["type"] = "task_lifecycle"
+        else:
+            payload["type"] = "status"
+
+        try:
+            payload["data"] = json.loads(text)
+        except json.JSONDecodeError:
+            payload["data"] = text
+
+        return json.dumps(payload, separators=(",", ":"))
 
 
 state = BridgeState()
@@ -194,8 +301,12 @@ async def health() -> Dict[str, Any]:
         "ok": True,
         "ros_available": ROS_AVAILABLE,
         "ros_enabled": ros_node is not None,
-        "command_topic": COMMAND_TOPIC,
-        "status_topic": STATUS_TOPIC,
+        "task_topic": TASK_TOPIC,
+        "control_topic": CONTROL_TOPIC,
+        "current_subtask_topic": CURRENT_SUBTASK_TOPIC,
+        "subtask_status_topic": SUBTASK_STATUS_TOPIC,
+        "task_planning_topic": TASK_PLANNING_TOPIC,
+        "sim_control_topic": SIM_CONTROL_TOPIC,
     }
 
 
@@ -209,17 +320,32 @@ async def command(request: CommandRequest) -> CommandResponse:
     if not command_text:
         raise HTTPException(status_code=400, detail="Empty or invalid command")
 
+    command_name = command_text.upper()
+    is_control = command_name in CONTROL_COMMANDS
+
     if ros_node is None:
         if not ALLOW_NO_ROS:
             raise HTTPException(status_code=503, detail="ROS 2 bridge is not available")
         state.latest_command_text = command_text
         logger.info("accepted command in no-ROS test mode: %s", command_text)
         published_topic = None
+        command_type = "control" if is_control else "task"
     else:
-        ros_node.publish_command(command_text, request.source)
-        published_topic = COMMAND_TOPIC
+        if is_control:
+            ros_node.publish_control(command_name, request.source)
+            published_topic = CONTROL_TOPIC
+            command_type = "control"
+        else:
+            ros_node.publish_task(command_text, request.source)
+            published_topic = TASK_TOPIC
+            command_type = "task"
 
-    return CommandResponse(ok=True, published_topic=published_topic, text=command_text)
+    return CommandResponse(
+        ok=True,
+        published_topic=published_topic,
+        command_type=command_type,
+        text=command_name if is_control else command_text,
+    )
 
 
 @app.websocket("/status")

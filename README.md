@@ -16,8 +16,10 @@ iPhone app
 Jetson bridge
   - FastAPI POST /command
   - FastAPI WebSocket /status
-  - ROS 2 publisher: /current_subtask
-  - ROS 2 subscriber: /task_status
+  - ROS 2 publisher: /scenario for normal spoken tasks
+  - ROS 2 publisher: /task_control for stop/pause/resume controls
+  - ROS 2 fallback publishers: /current_subtask and /start_exploration
+  - ROS 2 status subscribers: /current_subtask, /subtask_status, /task_planning, /sim_control
 ```
 
 ## Repository Layout
@@ -89,7 +91,7 @@ Use your actual ROS 2 distro path if it is not Humble.
 Start the bridge:
 
 ```bash
-export ROBOT_BRIDGE_TOKEN="change_this_token"
+export ROBOT_BRIDGE_TOKEN="2001"
 python3 robot_bridge.py
 ```
 
@@ -102,7 +104,7 @@ http://0.0.0.0:8080
 The iPhone app should use the Jetson's Wi-Fi IP address, for example:
 
 ```text
-192.168.1.100
+192.168.8.150
 ```
 
 ## App Usage
@@ -125,7 +127,7 @@ Stop Subtask    sends STOP_CURRENT_SUBTASK
 Pause Subtask   sends PAUSE_CURRENT_SUBTASK
 ```
 
-The Jetson bridge forwards these as normal command payloads on `/current_subtask`. Robot-side code should treat stop messages as high-priority stop requests and pause messages as subtask pause requests.
+The Jetson bridge publishes normal spoken tasks to `/scenario`. It publishes stop/pause controls to `/task_control`, and also publishes fallback preemption messages to `/current_subtask` and `/start_exploration=false` for currently deployed robot nodes.
 
 ## Network API
 
@@ -140,17 +142,17 @@ Request body:
 ```json
 {
   "text": "start exploration and find the elevator",
-  "token": "change_this_token",
+  "token": "2001",
   "source": "iphone"
 }
 ```
 
-Fixed stop command request bodies use the same endpoint and token:
+Fixed task-control request bodies use the same endpoint and token:
 
 ```json
 {
   "text": "STOP_CURRENT_TASK",
-  "token": "change_this_token",
+  "token": "2001",
   "source": "iphone"
 }
 ```
@@ -158,7 +160,7 @@ Fixed stop command request bodies use the same endpoint and token:
 ```json
 {
   "text": "STOP_CURRENT_SUBTASK",
-  "token": "change_this_token",
+  "token": "2001",
   "source": "iphone"
 }
 ```
@@ -166,7 +168,7 @@ Fixed stop command request bodies use the same endpoint and token:
 ```json
 {
   "text": "PAUSE_CURRENT_SUBTASK",
-  "token": "change_this_token",
+  "token": "2001",
   "source": "iphone"
 }
 ```
@@ -177,32 +179,54 @@ The app receives status from:
 ws://JETSON_IP:8080/status
 ```
 
-The bridge accepts simple string status messages or JSON status messages from ROS 2.
+The bridge streams JSON-wrapped status messages from ROS 2. The `data` field can be a raw string or decoded JSON from the robot topic.
 
-Example richer status JSON:
+Example status WebSocket message from the Jetson bridge:
 
 ```json
 {
-  "state": "running",
-  "skill": "exploration",
-  "subtask": "find the elevator",
-  "message": "Exploring hallway",
-  "progress": 0.42
+  "type": "current_subtask",
+  "topic": "/current_subtask",
+  "timestamp": 123.0,
+  "data": {
+    "skill": "exploration"
+  }
 }
 ```
 
 ## ROS 2 Topics
 
-Command topic published by the bridge:
+Normal task topic published by the bridge:
+
+```text
+/scenario
+std_msgs/msg/String
+```
+
+Control topic published by the bridge:
+
+```text
+/task_control
+std_msgs/msg/String
+```
+
+Fallback preemption topics published by the bridge:
 
 ```text
 /current_subtask
 std_msgs/msg/String
+
+/start_exploration
+std_msgs/msg/Bool
 ```
 
-Status topic consumed by the bridge:
+Status topics consumed by the bridge:
 
 ```text
+/current_subtask
+/subtask_status
+/task_planning
+/sim_control
 /task_status
 std_msgs/msg/String
 ```
@@ -214,13 +238,13 @@ Test command publishing:
 ```bash
 curl -X POST http://JETSON_IP:8080/command \
   -H "Content-Type: application/json" \
-  -d '{"text":"start exploration and find the elevator","token":"change_this_token","source":"iphone"}'
+  -d '{"text":"start exploration and find the elevator","token":"2001","source":"iphone"}'
 ```
 
-Watch the ROS 2 command topic:
+Watch the ROS 2 normal task topic:
 
 ```bash
-ros2 topic echo /current_subtask
+ros2 topic echo /scenario
 ```
 
 Publish fake robot status:

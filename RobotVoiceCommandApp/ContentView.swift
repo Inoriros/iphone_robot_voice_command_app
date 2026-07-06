@@ -285,6 +285,14 @@ struct ContentView: View {
             if let timestamp = status.timestamp {
                 labeledValue("Last update", formattedTimestamp(timestamp))
             }
+
+            if let type = status.type, !type.isEmpty {
+                labeledValue("Type", type)
+            }
+
+            if let topic = status.topic, !topic.isEmpty {
+                labeledValue("Topic", topic)
+            }
         }
         .font(.subheadline)
         .foregroundStyle(.secondary)
