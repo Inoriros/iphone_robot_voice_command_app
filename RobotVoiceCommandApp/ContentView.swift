@@ -26,6 +26,8 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     connectionSection
                     statusSection
+                    taskPlanSection
+                    reasoningEvidenceSection
                     stopControlsSection
                     commandSection
                     feedbackSection
@@ -172,6 +174,59 @@ struct ContentView: View {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Clear")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var taskPlanSection: some View {
+        if let taskPlan = robot.latestTaskPlanText, !taskPlan.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Task Plan")
+                    .font(.headline)
+                Text(taskPlan)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var reasoningEvidenceSection: some View {
+        if robot.latestEvidenceImageData != nil || robot.latestPromptEvidenceText != nil {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Reasoning Evidence")
+                    .font(.headline)
+
+                if let imageData = robot.latestEvidenceImageData,
+                   let image = UIImage(data: imageData) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                    if let format = robot.latestEvidenceImageFormat, !format.isEmpty {
+                        Text("Image format: \(format)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let promptEvidence = robot.latestPromptEvidenceText,
+                   !promptEvidence.isEmpty {
+                    Text(promptEvidence)
+                        .font(.caption.monospaced())
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
             }
         }
     }

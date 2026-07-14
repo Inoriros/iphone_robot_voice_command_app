@@ -5,6 +5,10 @@ final class RobotClient: ObservableObject {
     @Published var connectionState = "Disconnected"
     @Published var currentStatusText = "No status received yet"
     @Published var lastStatus: RobotStatus?
+    @Published var latestTaskPlanText: String?
+    @Published var latestPromptEvidenceText: String?
+    @Published var latestEvidenceImageData: Data?
+    @Published var latestEvidenceImageFormat: String?
     @Published var lastError: String?
     @Published var lastCommandMessage: String?
     @Published var lastCommandSendSucceeded = false
@@ -170,8 +174,47 @@ final class RobotClient: ObservableObject {
     }
 
     private func handleStatusText(_ text: String) {
-        guard let data = text.data(using: .utf8),
-              let status = try? jsonDecoder.decode(RobotStatus.self, from: data) else {
+        guard let data = text.data(using: .utf8) else {
+            lastStatus = nil
+            currentStatusText = text
+            return
+        }
+
+        if let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let eventType = event["type"] as? String {
+            let eventData = event["data"]
+            switch eventType {
+            case "task_plan":
+                latestTaskPlanText = formattedJSON(eventData)
+                latestPromptEvidenceText = nil
+                latestEvidenceImageData = nil
+                latestEvidenceImageFormat = nil
+                return
+            case "prompt_evidence":
+                latestPromptEvidenceText = formattedJSON(eventData)
+                return
+            case "image_evidence":
+                if let imagePayload = eventData as? [String: Any],
+                   let encoded = imagePayload["base64"] as? String,
+                   let imageData = Data(
+                       base64Encoded: encoded,
+                       options: .ignoreUnknownCharacters
+                   ) {
+                    latestEvidenceImageData = imageData
+                    latestEvidenceImageFormat = imagePayload["format"] as? String
+                }
+                return
+            default:
+                if let nestedData = encodedJSON(eventData),
+                   let status = try? jsonDecoder.decode(RobotStatus.self, from: nestedData) {
+                    lastStatus = status
+                    currentStatusText = status.displayText
+                    return
+                }
+            }
+        }
+
+        guard let status = try? jsonDecoder.decode(RobotStatus.self, from: data) else {
             lastStatus = nil
             currentStatusText = text
             return
@@ -179,6 +222,27 @@ final class RobotClient: ObservableObject {
 
         lastStatus = status
         currentStatusText = status.displayText
+    }
+
+    private func encodedJSON(_ value: Any?) -> Data? {
+        guard let value, JSONSerialization.isValidJSONObject(value) else {
+            return nil
+        }
+        return try? JSONSerialization.data(withJSONObject: value)
+    }
+
+    private func formattedJSON(_ value: Any?) -> String? {
+        if let text = value as? String {
+            return text
+        }
+        guard let value, JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(
+                  withJSONObject: value,
+                  options: [.prettyPrinted, .sortedKeys]
+              ) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
     }
 
     private func commandURL(ip: String) -> URL? {

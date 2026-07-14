@@ -11,13 +11,13 @@ iPhone app
   - Apple Speech framework: microphone audio to recognized text
   - SwiftUI: editable command text, connection controls, status display
   - HTTP POST: sends verified command to Jetson
-  - WebSocket: receives task status updates
+  - WebSocket: receives task status, task plans, and reasoning evidence
 
 Jetson bridge
   - FastAPI POST /command
   - FastAPI WebSocket /status
-  - ROS 2 publisher: /current_subtask
-  - ROS 2 subscriber: /task_status
+  - ROS 2 publishers: /scenario and /task_control
+  - ROS 2 subscribers: task status, /task_planning, and reasoning evidence
 ```
 
 ## Repository Layout
@@ -125,7 +125,8 @@ Stop Subtask    sends STOP_CURRENT_SUBTASK
 Pause Subtask   sends PAUSE_CURRENT_SUBTASK
 ```
 
-The Jetson bridge forwards these as normal command payloads on `/current_subtask`. Robot-side code should treat stop messages as high-priority stop requests and pause messages as subtask pause requests.
+The Jetson bridge forwards these controls on `/task_control` and publishes an
+immediate `/current_subtask` preemption marker for stop/pause commands.
 
 ## Network API
 
@@ -139,7 +140,7 @@ Request body:
 
 ```json
 {
-  "text": "start exploration and find the elevator",
+  "text": "search for the elevator",
   "token": "change_this_token",
   "source": "iphone"
 }
@@ -178,13 +179,18 @@ ws://JETSON_IP:8080/status
 ```
 
 The bridge accepts simple string status messages or JSON status messages from ROS 2.
+It also streams and the app displays:
+
+- `/task_planning` as a `task_plan` event.
+- `/subtask_prompt_evidance` as a `prompt_evidence` event.
+- `/subtask_image_evidence` as an `image_evidence` event containing base64 compressed image bytes.
 
 Example richer status JSON:
 
 ```json
 {
   "state": "running",
-  "skill": "exploration",
+  "skill": "searching_navigation",
   "subtask": "find the elevator",
   "message": "Exploring hallway",
   "progress": 0.42
@@ -193,18 +199,30 @@ Example richer status JSON:
 
 ## ROS 2 Topics
 
-Command topic published by the bridge:
+Command topics published by the bridge:
 
 ```text
-/current_subtask
+/scenario
+std_msgs/msg/String
+
+/task_control
 std_msgs/msg/String
 ```
 
-Status topic consumed by the bridge:
+Status and evidence topics consumed by the bridge include:
 
 ```text
 /task_status
 std_msgs/msg/String
+
+/task_planning
+std_msgs/msg/String
+
+/subtask_prompt_evidance
+std_msgs/msg/String
+
+/subtask_image_evidence
+sensor_msgs/msg/CompressedImage
 ```
 
 ## Manual Tests
@@ -214,20 +232,20 @@ Test command publishing:
 ```bash
 curl -X POST http://JETSON_IP:8080/command \
   -H "Content-Type: application/json" \
-  -d '{"text":"start exploration and find the elevator","token":"change_this_token","source":"iphone"}'
+  -d '{"text":"search for the elevator","token":"change_this_token","source":"iphone"}'
 ```
 
 Watch the ROS 2 command topic:
 
 ```bash
-ros2 topic echo /current_subtask
+ros2 topic echo /scenario
 ```
 
 Publish fake robot status:
 
 ```bash
 ros2 topic pub /task_status std_msgs/msg/String \
-  "{data: '{\"state\":\"running\",\"skill\":\"exploration\",\"message\":\"Exploring hallway\",\"progress\":0.42}'}"
+  "{data: '{\"state\":\"running\",\"skill\":\"searching_navigation\",\"message\":\"Searching hallway\",\"progress\":0.42}'}"
 ```
 
 ## Test Without ROS 2

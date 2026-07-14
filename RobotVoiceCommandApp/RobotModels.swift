@@ -23,6 +23,7 @@ struct RobotStatus: Codable {
     var state: String?
     var skill: String?
     var subtask: String?
+    var instruction: String?
     var message: String?
     var progress: Double?
     var timestamp: Double?
@@ -34,6 +35,14 @@ struct RobotStatus: Codable {
 
         if let status, !status.isEmpty {
             return status
+        }
+
+        if let instruction, !instruction.isEmpty {
+            return instruction
+        }
+
+        if let skill, !skill.isEmpty {
+            return "Active skill: \(skill)"
         }
 
         return "Status update received"
