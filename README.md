@@ -141,7 +141,7 @@ Request body:
 ```json
 {
   "text": "search for the elevator",
-  "token": "change_this_token",
+  "token": "2001",
   "source": "iphone"
 }
 ```
@@ -207,9 +207,6 @@ std_msgs/msg/String
 
 /task_control
 std_msgs/msg/String
-
-/start_exploration
-std_msgs/msg/Bool
 ```
 
 Status and evidence topics consumed by the bridge include:
@@ -218,14 +215,9 @@ Status and evidence topics consumed by the bridge include:
 /current_subtask
 /subtask_status
 /task_planning
+/subtask_prompt_evidance
 /sim_control
 /task_status
-std_msgs/msg/String
-
-/task_planning
-std_msgs/msg/String
-
-/subtask_prompt_evidance
 std_msgs/msg/String
 
 /subtask_image_evidence
@@ -239,13 +231,12 @@ Test command publishing:
 ```bash
 curl -X POST http://JETSON_IP:8080/command \
   -H "Content-Type: application/json" \
-  -d '{"text":"search for the elevator","token":"change_this_token","source":"iphone"}'
+  -d '{"text":"search for the elevator","token":"2001","source":"iphone"}'
 ```
 
 Watch the ROS 2 normal task topic:
 
 ```bash
-ros2 topic echo /scenario
 ros2 topic echo /scenario
 ```
 

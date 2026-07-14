@@ -109,6 +109,7 @@ struct RobotStatus: Codable {
         case state
         case skill
         case subtask
+        case instruction
         case message
         case progress
         case timestamp
@@ -124,6 +125,7 @@ struct RobotStatus: Codable {
         state = try container.decodeIfPresent(String.self, forKey: .state)
         skill = try container.decodeIfPresent(String.self, forKey: .skill)
         subtask = try container.decodeIfPresent(String.self, forKey: .subtask)
+        instruction = try container.decodeIfPresent(String.self, forKey: .instruction)
         message = try container.decodeIfPresent(String.self, forKey: .message)
         progress = try container.decodeIfPresent(Double.self, forKey: .progress)
         timestamp = try container.decodeIfPresent(Double.self, forKey: .timestamp)
@@ -136,6 +138,7 @@ struct RobotStatus: Codable {
             state = state ?? object.stringValue(for: "state")
             skill = skill ?? object.stringValue(for: "skill")
             subtask = subtask ?? object.stringValue(for: "subtask")
+            instruction = instruction ?? object.stringValue(for: "instruction")
             message = message ?? object.stringValue(for: "message")
             progress = progress ?? object.doubleValue(for: "progress")
             timestamp = timestamp ?? object.doubleValue(for: "timestamp")
@@ -157,6 +160,14 @@ struct RobotStatus: Codable {
 
         if let skill, !skill.isEmpty {
             return "Active skill: \(skill)"
+        }
+
+        if let dataText = data?.plainText, !dataText.isEmpty {
+            return dataText
+        }
+
+        if let type, !type.isEmpty {
+            return "\(type) update received"
         }
 
         return "Status update received"

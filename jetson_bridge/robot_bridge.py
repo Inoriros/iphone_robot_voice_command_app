@@ -69,13 +69,6 @@ CONTROL_COMMANDS = {
     "RESUME_CURRENT_SUBTASK",
 }
 
-CONTROL_COMMANDS = {
-    "STOP_CURRENT_TASK",
-    "STOP_CURRENT_SUBTASK",
-    "PAUSE_CURRENT_SUBTASK",
-    "RESUME_CURRENT_SUBTASK",
-}
-
 
 class CommandRequest(BaseModel):
     text: str = Field(..., min_length=1)
@@ -86,7 +79,6 @@ class CommandRequest(BaseModel):
 class CommandResponse(BaseModel):
     ok: bool
     published_topic: Optional[str] = None
-    command_type: str = "task"
     command_type: str = "task"
     text: Optional[str] = None
 
@@ -200,20 +192,15 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
         self._state.latest_command_text = command_text
         self.get_logger().info(
             f"published iPhone task to {TASK_TOPIC} from {source}: {command_text}"
-            f"published iPhone task to {TASK_TOPIC} from {source}: {command_text}"
         )
 
     def publish_control(self, command_text: str, source: str) -> None:
         command_name = command_text.strip().upper()
-    def publish_control(self, command_text: str, source: str) -> None:
-        command_name = command_text.strip().upper()
         payload = {
-            "command": command_name,
             "command": command_name,
             "source": source,
             "timestamp": time.time(),
         }
-
 
         message = String()
         message.data = json.dumps(payload, separators=(",", ":"))
@@ -401,16 +388,12 @@ async def command(request: CommandRequest) -> CommandResponse:
     command_name = command_text.upper()
     is_control = command_name in CONTROL_COMMANDS
 
-    command_name = command_text.upper()
-    is_control = command_name in CONTROL_COMMANDS
-
     if ros_node is None:
         if not ALLOW_NO_ROS:
             raise HTTPException(status_code=503, detail="ROS 2 bridge is not available")
         state.latest_command_text = command_text
         logger.info("accepted command in no-ROS test mode: %s", command_text)
         published_topic = None
-        command_type = "control" if is_control else "task"
         command_type = "control" if is_control else "task"
     else:
         if is_control:
@@ -421,21 +404,7 @@ async def command(request: CommandRequest) -> CommandResponse:
             ros_node.publish_task(command_text, request.source)
             published_topic = TASK_TOPIC
             command_type = "task"
-        if is_control:
-            ros_node.publish_control(command_name, request.source)
-            published_topic = CONTROL_TOPIC
-            command_type = "control"
-        else:
-            ros_node.publish_task(command_text, request.source)
-            published_topic = TASK_TOPIC
-            command_type = "task"
 
-    return CommandResponse(
-        ok=True,
-        published_topic=published_topic,
-        command_type=command_type,
-        text=command_name if is_control else command_text,
-    )
     return CommandResponse(
         ok=True,
         published_topic=published_topic,
