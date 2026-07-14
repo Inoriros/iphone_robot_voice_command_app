@@ -78,6 +78,7 @@ Use your installed ROS 2 distro path if it is not Humble.
 
 ```bash
 export ROBOT_BRIDGE_TOKEN="2001"
+export ROBOT_BRIDGE_TOKEN="2001"
 python3 robot_bridge.py
 ```
 
@@ -101,6 +102,7 @@ On the Jetson, check the ROS topic:
 
 ```bash
 ros2 topic echo /scenario
+ros2 topic echo /scenario
 ```
 
 The iPhone task-control buttons send these exact command texts through the same `/command` endpoint:
@@ -112,6 +114,14 @@ PAUSE_CURRENT_SUBTASK
 ```
 
 Robot-side consumers of `/current_subtask` should handle stop messages as high-priority stop requests and pause messages as subtask pause requests.
+
+You can test a stop button from another machine:
+
+```bash
+curl -X POST http://JETSON_IP:8080/command \
+  -H "Content-Type: application/json" \
+  -d '{"text":"STOP_CURRENT_TASK","token":"2001","source":"iphone"}'
+```
 
 You can test a stop button from another machine:
 

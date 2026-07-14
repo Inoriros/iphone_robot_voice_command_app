@@ -89,7 +89,7 @@ Use your actual ROS 2 distro path if it is not Humble.
 Start the bridge:
 
 ```bash
-export ROBOT_BRIDGE_TOKEN="change_this_token"
+export ROBOT_BRIDGE_TOKEN="2001"
 python3 robot_bridge.py
 ```
 
@@ -102,7 +102,7 @@ http://0.0.0.0:8080
 The iPhone app should use the Jetson's Wi-Fi IP address, for example:
 
 ```text
-192.168.1.100
+192.168.8.150
 ```
 
 ## App Usage
@@ -146,12 +146,12 @@ Request body:
 }
 ```
 
-Fixed stop command request bodies use the same endpoint and token:
+Fixed task-control request bodies use the same endpoint and token:
 
 ```json
 {
   "text": "STOP_CURRENT_TASK",
-  "token": "change_this_token",
+  "token": "2001",
   "source": "iphone"
 }
 ```
@@ -159,7 +159,7 @@ Fixed stop command request bodies use the same endpoint and token:
 ```json
 {
   "text": "STOP_CURRENT_SUBTASK",
-  "token": "change_this_token",
+  "token": "2001",
   "source": "iphone"
 }
 ```
@@ -167,7 +167,7 @@ Fixed stop command request bodies use the same endpoint and token:
 ```json
 {
   "text": "PAUSE_CURRENT_SUBTASK",
-  "token": "change_this_token",
+  "token": "2001",
   "source": "iphone"
 }
 ```
@@ -185,7 +185,7 @@ It also streams and the app displays:
 - `/subtask_prompt_evidance` as a `prompt_evidence` event.
 - `/subtask_image_evidence` as an `image_evidence` event containing base64 compressed image bytes.
 
-Example richer status JSON:
+Example status WebSocket message from the Jetson bridge:
 
 ```json
 {
@@ -207,11 +207,18 @@ std_msgs/msg/String
 
 /task_control
 std_msgs/msg/String
+
+/start_exploration
+std_msgs/msg/Bool
 ```
 
 Status and evidence topics consumed by the bridge include:
 
 ```text
+/current_subtask
+/subtask_status
+/task_planning
+/sim_control
 /task_status
 std_msgs/msg/String
 
@@ -235,9 +242,10 @@ curl -X POST http://JETSON_IP:8080/command \
   -d '{"text":"search for the elevator","token":"change_this_token","source":"iphone"}'
 ```
 
-Watch the ROS 2 command topic:
+Watch the ROS 2 normal task topic:
 
 ```bash
+ros2 topic echo /scenario
 ros2 topic echo /scenario
 ```
 

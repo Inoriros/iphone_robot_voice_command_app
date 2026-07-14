@@ -1,8 +1,8 @@
 import Foundation
 
 enum AppConfig {
-    static let defaultJetsonIP = "192.168.1.100"
-    static let defaultToken = "change_this_token"
+    static let defaultJetsonIP = "192.168.8.150"
+    static let defaultToken = "2001"
     static let defaultPort = 8080
     static let commandPath = "/command"
     static let statusPath = "/status"
