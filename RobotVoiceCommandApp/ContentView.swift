@@ -27,7 +27,7 @@ struct ContentView: View {
                     connectionSection
                     statusSection
                     taskPlanSection
-                    reasoningEvidenceSection
+                    subtaskProofSection
                     stopControlsSection
                     commandSection
                     feedbackSection
@@ -195,12 +195,14 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
-    private var reasoningEvidenceSection: some View {
-        if robot.latestEvidenceImageData != nil || robot.latestPromptEvidenceText != nil {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Reasoning Evidence")
-                    .font(.headline)
+    private var subtaskProofSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Subtask Proof")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Image Proof", systemImage: "photo")
+                    .font(.subheadline.weight(.semibold))
 
                 if let imageData = robot.latestEvidenceImageData,
                    let image = UIImage(data: imageData) {
@@ -211,11 +213,18 @@ struct ContentView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                     if let format = robot.latestEvidenceImageFormat, !format.isEmpty {
-                        Text("Image format: \(format)")
+                        Text("Format: \(format)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                } else {
+                    proofPlaceholder("Waiting for image proof", systemImage: "clock")
                 }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Prompt Proof", systemImage: "text.quote")
+                    .font(.subheadline.weight(.semibold))
 
                 if let promptEvidence = robot.latestPromptEvidenceText,
                    !promptEvidence.isEmpty {
@@ -226,9 +235,20 @@ struct ContentView: View {
                         .padding()
                         .background(Color(.secondarySystemGroupedBackground))
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                } else {
+                    proofPlaceholder("Waiting for prompt proof", systemImage: "clock")
                 }
             }
         }
+    }
+
+    private func proofPlaceholder(_ text: String, systemImage: String) -> some View {
+        Label(text, systemImage: systemImage)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, minHeight: 72, alignment: .center)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private var stopControlsSection: some View {
