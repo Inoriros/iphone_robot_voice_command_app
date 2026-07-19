@@ -11,4 +11,7 @@ enum AppConfig {
     static let stopCurrentTaskCommand = "STOP_CURRENT_TASK"
     static let stopCurrentSubtaskCommand = "STOP_CURRENT_SUBTASK"
     static let pauseCurrentSubtaskCommand = "PAUSE_CURRENT_SUBTASK"
+    static let armRelaxCommand = "ARM_RELAX"
+    static let armButtonCommand = "ARM_BUTTON"
+    static let armPressCommand = "ARM_PRESS"
 }

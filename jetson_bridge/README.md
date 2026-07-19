@@ -10,6 +10,7 @@ It exposes:
 - ROS 2 publisher: `/scenario` as `std_msgs/msg/String` for normal spoken tasks.
 - ROS 2 publisher: `/task_control` as `std_msgs/msg/String` for stop/pause/resume controls.
 - ROS 2 fallback publisher: `/current_subtask` for immediate foreground-skill preemption.
+- ROS 2 publisher: `/current_arm_subtask` for fixed arm actions.
 - ROS 2 status subscribers: `/current_subtask`, `/subtask_status`, `/task_planning`, `/subtask_prompt_evidance`, `/subtask_image_evidence`, `/sim_control`, plus optional `/task_status`.
 
 ## How It Connects To The Robot
@@ -25,6 +26,7 @@ The bridge decides what to do:
 
 - Normal text, for example `find the red fire extinguisher`, is published directly to `/scenario`.
 - `STOP_CURRENT_TASK`, `STOP_CURRENT_SUBTASK`, `PAUSE_CURRENT_SUBTASK`, and `RESUME_CURRENT_SUBTASK` are published to `/task_control`.
+- `ARM_RELAX`, `ARM_BUTTON`, and `ARM_PRESS` publish fixed action JSON to `/current_arm_subtask`.
 - Stop/pause commands also publish a non-active `/current_subtask` marker so following, VLM guidance, and navigation skills can preempt quickly. They do not stop the persistent exploration module or clear its history.
 
 The battery button sends an authenticated request to:
@@ -139,6 +141,25 @@ PAUSE_CURRENT_SUBTASK
 ```
 
 Robot-side consumers of `/current_subtask` should handle stop messages as high-priority stop requests and pause messages as subtask pause requests.
+
+The three arm buttons send `ARM_RELAX`, `ARM_BUTTON`, and `ARM_PRESS` through
+`/command`. The bridge publishes these respective payloads:
+
+```text
+{"action_name":"move_to_relax","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
+{"action_name":"move_to_button","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
+{"action_name":"move_to_press","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
+```
+
+Test an arm button and watch the ROS topic:
+
+```bash
+curl -X POST http://JETSON_IP:8080/command \
+  -H "Content-Type: application/json" \
+  -d '{"text":"ARM_RELAX","token":"2001","source":"manual-test"}'
+
+ros2 topic echo /current_arm_subtask
+```
 
 You can test a stop button from another machine:
 

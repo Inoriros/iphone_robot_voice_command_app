@@ -34,6 +34,7 @@ struct ContentView: View {
                     taskPlanSection
                     subtaskProofSection
                     stopControlsSection
+                    armControlsSection
                     commandSection
                     feedbackSection
                 }
@@ -316,7 +317,7 @@ struct ContentView: View {
             Grid(horizontalSpacing: 12, verticalSpacing: 12) {
                 GridRow {
                     Button(role: .destructive) {
-                        sendControlCommand(AppConfig.stopCurrentTaskCommand)
+                        sendFixedCommand(AppConfig.stopCurrentTaskCommand)
                     } label: {
                         Label("Stop Task", systemImage: "stop.fill")
                             .frame(maxWidth: .infinity)
@@ -326,7 +327,7 @@ struct ContentView: View {
                     .disabled(!canSendControlCommand)
 
                     Button(role: .destructive) {
-                        sendControlCommand(AppConfig.stopCurrentSubtaskCommand)
+                        sendFixedCommand(AppConfig.stopCurrentSubtaskCommand)
                     } label: {
                         Label("Stop Subtask", systemImage: "stop.fill")
                             .frame(maxWidth: .infinity)
@@ -338,9 +339,53 @@ struct ContentView: View {
 
                 GridRow {
                     Button {
-                        sendControlCommand(AppConfig.pauseCurrentSubtaskCommand)
+                        sendFixedCommand(AppConfig.pauseCurrentSubtaskCommand)
                     } label: {
                         Label("Pause Subtask", systemImage: "pause.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .disabled(!canSendControlCommand)
+                    .gridCellColumns(2)
+                }
+            }
+        }
+    }
+
+    private var armControlsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Robot Arm")
+                .font(.headline)
+
+            Grid(horizontalSpacing: 12, verticalSpacing: 12) {
+                GridRow {
+                    Button {
+                        sendFixedCommand(AppConfig.armRelaxCommand)
+                    } label: {
+                        Label("Relax", systemImage: "hand.raised")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
+                    .disabled(!canSendControlCommand)
+
+                    Button {
+                        sendFixedCommand(AppConfig.armButtonCommand)
+                    } label: {
+                        Label("Move to Button", systemImage: "scope")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
+                    .disabled(!canSendControlCommand)
+                }
+
+                GridRow {
+                    Button {
+                        sendFixedCommand(AppConfig.armPressCommand)
+                    } label: {
+                        Label("Press Button", systemImage: "hand.tap")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -476,7 +521,7 @@ struct ContentView: View {
         min(max(progress, 0), 1)
     }
 
-    private func sendControlCommand(_ text: String) {
+    private func sendFixedCommand(_ text: String) {
         speech.stopRecording()
         commandText = text
         robot.sendCommand(ip: jetsonIP, token: token, text: text)

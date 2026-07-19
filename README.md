@@ -17,7 +17,7 @@ Jetson bridge
   - FastAPI POST /command
   - FastAPI POST /battery
   - FastAPI WebSocket /status
-  - ROS 2 publishers: /scenario and /task_control
+  - ROS 2 publishers: /scenario, /task_control, and /current_arm_subtask
   - ROS 2 subscribers: task status, /task_planning, and reasoning evidence
 ```
 
@@ -130,6 +130,14 @@ Pause Subtask   sends PAUSE_CURRENT_SUBTASK
 The Jetson bridge forwards these controls on `/task_control` and publishes an
 immediate `/current_subtask` preemption marker for stop/pause commands.
 
+The app also has three fixed arm controls:
+
+```text
+Relax           sends ARM_RELAX
+Move to Button  sends ARM_BUTTON
+Press Button    sends ARM_PRESS
+```
+
 ## Network API
 
 The iPhone sends commands to:
@@ -172,6 +180,24 @@ Fixed task-control request bodies use the same endpoint and token:
   "token": "2001",
   "source": "iphone"
 }
+```
+
+Fixed arm-action requests use the same endpoint. For example:
+
+```json
+{
+  "text": "ARM_RELAX",
+  "token": "2001",
+  "source": "iphone"
+}
+```
+
+The bridge maps the three command texts to `/current_arm_subtask` payloads:
+
+```text
+ARM_RELAX   -> {"action_name":"move_to_relax","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
+ARM_BUTTON  -> {"action_name":"move_to_button","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
+ARM_PRESS   -> {"action_name":"move_to_press","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ```
 
 The battery button sends:
@@ -226,6 +252,9 @@ std_msgs/msg/String
 
 /task_control
 std_msgs/msg/String
+
+/current_arm_subtask
+std_msgs/msg/String
 ```
 
 Status and evidence topics consumed by the bridge include:
@@ -259,6 +288,16 @@ Test the battery endpoint:
 curl -X POST http://JETSON_IP:8080/battery \
   -H "Content-Type: application/json" \
   -d '{"token":"2001","source":"manual-test"}'
+```
+
+Test an arm action and watch its ROS topic:
+
+```bash
+curl -X POST http://JETSON_IP:8080/command \
+  -H "Content-Type: application/json" \
+  -d '{"text":"ARM_RELAX","token":"2001","source":"manual-test"}'
+
+ros2 topic echo /current_arm_subtask
 ```
 
 Watch the ROS 2 normal task topic:

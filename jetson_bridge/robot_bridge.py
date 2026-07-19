@@ -44,6 +44,7 @@ logger = logging.getLogger("robot_bridge")
 TASK_TOPIC = os.getenv("ROBOT_TASK_TOPIC", os.getenv("ROBOT_COMMAND_TOPIC", "/scenario"))
 CONTROL_TOPIC = os.getenv("ROBOT_CONTROL_TOPIC", "/task_control")
 CURRENT_SUBTASK_TOPIC = os.getenv("ROBOT_CURRENT_SUBTASK_TOPIC", "/current_subtask")
+CURRENT_ARM_SUBTASK_TOPIC = os.getenv("ROBOT_CURRENT_ARM_SUBTASK_TOPIC", "/current_arm_subtask")
 SUBTASK_STATUS_TOPIC = os.getenv("ROBOT_SUBTASK_STATUS_TOPIC", "/subtask_status")
 TASK_PLANNING_TOPIC = os.getenv("ROBOT_TASK_PLANNING_TOPIC", "/task_planning")
 PROMPT_EVIDENCE_TOPIC = os.getenv(
@@ -75,6 +76,24 @@ CONTROL_COMMANDS = {
     "STOP_CURRENT_SUBTASK",
     "PAUSE_CURRENT_SUBTASK",
     "RESUME_CURRENT_SUBTASK",
+}
+
+ARM_ACTION_COMMANDS = {
+    "ARM_RELAX": {
+        "action_name": "move_to_relax",
+        "start_pos": [0.0, 0.0, 0.0],
+        "target_pos": [0.0, 0.0, 0.0],
+    },
+    "ARM_BUTTON": {
+        "action_name": "move_to_button",
+        "start_pos": [0.0, 0.0, 0.0],
+        "target_pos": [0.0, 0.0, 0.0],
+    },
+    "ARM_PRESS": {
+        "action_name": "move_to_press",
+        "start_pos": [0.0, 0.0, 0.0],
+        "target_pos": [0.0, 0.0, 0.0],
+    },
 }
 
 
@@ -162,6 +181,11 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             CURRENT_SUBTASK_TOPIC,
             transient_qos,
         )
+        self._current_arm_subtask_pub = self.create_publisher(
+            String,
+            CURRENT_ARM_SUBTASK_TOPIC,
+            transient_qos,
+        )
 
         for topic in dict.fromkeys(
             [
@@ -199,6 +223,7 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
         self.get_logger().info(
             "bridge ready: "
             f"tasks -> {TASK_TOPIC}, controls -> {CONTROL_TOPIC}, "
+            f"arm actions -> {CURRENT_ARM_SUBTASK_TOPIC}, "
             f"status <- {CURRENT_SUBTASK_TOPIC}, {SUBTASK_STATUS_TOPIC}, "
             f"{TASK_PLANNING_TOPIC}, {PROMPT_EVIDENCE_TOPIC}, "
             f"{IMAGE_EVIDENCE_TOPIC}, {SIM_CONTROL_TOPIC}"
@@ -238,6 +263,20 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
 
         self.get_logger().warning(
             f"published iPhone control to {CONTROL_TOPIC}: {command_name}"
+        )
+
+    def publish_arm_action(self, command_name: str, source: str) -> None:
+        payload = ARM_ACTION_COMMANDS[command_name]
+        message = String()
+        message.data = json.dumps(payload, separators=(",", ":"))
+        self._current_arm_subtask_pub.publish(message)
+        self._state.latest_command_text = command_name
+
+        self.get_logger().warning(
+            "published iPhone arm action to %s from %s: %s",
+            CURRENT_ARM_SUBTASK_TOPIC,
+            source,
+            message.data,
         )
 
     @staticmethod
@@ -463,6 +502,7 @@ async def health() -> Dict[str, Any]:
         "task_topic": TASK_TOPIC,
         "control_topic": CONTROL_TOPIC,
         "current_subtask_topic": CURRENT_SUBTASK_TOPIC,
+        "current_arm_subtask_topic": CURRENT_ARM_SUBTASK_TOPIC,
         "subtask_status_topic": SUBTASK_STATUS_TOPIC,
         "task_planning_topic": TASK_PLANNING_TOPIC,
         "prompt_evidence_topic": PROMPT_EVIDENCE_TOPIC,
@@ -483,19 +523,31 @@ async def command(request: CommandRequest) -> CommandResponse:
 
     command_name = command_text.upper()
     is_control = command_name in CONTROL_COMMANDS
+    is_arm_action = command_name in ARM_ACTION_COMMANDS
 
     if ros_node is None:
         if not ALLOW_NO_ROS:
             raise HTTPException(status_code=503, detail="ROS 2 bridge is not available")
-        state.latest_command_text = command_text
+        state.latest_command_text = (
+            command_name if is_control or is_arm_action else command_text
+        )
         logger.info("accepted command in no-ROS test mode: %s", command_text)
         published_topic = None
-        command_type = "control" if is_control else "task"
+        if is_control:
+            command_type = "control"
+        elif is_arm_action:
+            command_type = "arm"
+        else:
+            command_type = "task"
     else:
         if is_control:
             ros_node.publish_control(command_name, request.source)
             published_topic = CONTROL_TOPIC
             command_type = "control"
+        elif is_arm_action:
+            ros_node.publish_arm_action(command_name, request.source)
+            published_topic = CURRENT_ARM_SUBTASK_TOPIC
+            command_type = "arm"
         else:
             ros_node.publish_task(command_text, request.source)
             published_topic = TASK_TOPIC
@@ -505,7 +557,7 @@ async def command(request: CommandRequest) -> CommandResponse:
         ok=True,
         published_topic=published_topic,
         command_type=command_type,
-        text=command_name if is_control else command_text,
+        text=command_name if is_control or is_arm_action else command_text,
     )
 
 
