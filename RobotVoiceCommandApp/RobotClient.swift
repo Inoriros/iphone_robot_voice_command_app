@@ -12,6 +12,9 @@ final class RobotClient: ObservableObject {
     @Published var lastError: String?
     @Published var lastCommandMessage: String?
     @Published var lastCommandSendSucceeded = false
+    @Published var batteryPercentage: Double?
+    @Published var batteryMessage: String?
+    @Published var isCheckingBattery = false
 
     private var webSocketTask: URLSessionWebSocketTask?
     private let jsonDecoder = JSONDecoder()
@@ -89,6 +92,76 @@ final class RobotClient: ObservableObject {
                         ? "Jetson returned HTTP \(httpResponse.statusCode): \(serverMessage!)"
                         : "Jetson returned HTTP \(httpResponse.statusCode)."
                     self.lastCommandSendSucceeded = false
+                }
+            }
+        }.resume()
+    }
+
+    func checkBattery(ip: String, token: String) {
+        let trimmedIP = normalizedHost(from: ip)
+
+        lastError = nil
+        batteryPercentage = nil
+        batteryMessage = nil
+        isCheckingBattery = false
+
+        guard !trimmedIP.isEmpty else {
+            lastError = "Jetson IP is required."
+            return
+        }
+
+        guard let url = batteryURL(ip: trimmedIP) else {
+            lastError = "Jetson IP is invalid."
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 25
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            let body = BatteryRequest(token: token, source: AppConfig.commandSource)
+            request.httpBody = try jsonEncoder.encode(body)
+        } catch {
+            lastError = "Could not encode battery request: \(error.localizedDescription)"
+            return
+        }
+
+        isCheckingBattery = true
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isCheckingBattery = false
+
+                if let error {
+                    self.lastError = "Cannot reach Jetson at \(trimmedIP):\(AppConfig.defaultPort). \(error.localizedDescription)"
+                    return
+                }
+
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    self.lastError = "Jetson returned an invalid battery response."
+                    return
+                }
+
+                switch httpResponse.statusCode {
+                case 200:
+                    guard let data,
+                          let response = try? self.jsonDecoder.decode(BatteryResponse.self, from: data),
+                          response.ok else {
+                        self.lastError = "Jetson returned an unreadable battery response."
+                        return
+                    }
+                    self.batteryPercentage = response.percentage
+                    self.batteryMessage = response.message
+                case 401:
+                    self.lastError = "Invalid token. Please check the token on the Jetson bridge."
+                default:
+                    if let detail = self.bridgeErrorDetail(from: data) {
+                        self.lastError = detail
+                    } else {
+                        self.lastError = "Jetson returned HTTP \(httpResponse.statusCode) while checking the battery."
+                    }
                 }
             }
         }.resume()
@@ -249,6 +322,10 @@ final class RobotClient: ObservableObject {
         URL(string: "http://\(ip):\(AppConfig.defaultPort)\(AppConfig.commandPath)")
     }
 
+    private func batteryURL(ip: String) -> URL? {
+        URL(string: "http://\(ip):\(AppConfig.defaultPort)\(AppConfig.batteryPath)")
+    }
+
     private func statusURL(ip: String) -> URL? {
         URL(string: "ws://\(ip):\(AppConfig.defaultPort)\(AppConfig.statusPath)")
     }
@@ -271,5 +348,15 @@ final class RobotClient: ObservableObject {
         }
 
         return hostWithOptionalPort
+    }
+
+    private func bridgeErrorDetail(from data: Data?) -> String? {
+        guard let data,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let detail = object["detail"] as? String,
+              !detail.isEmpty else {
+            return nil
+        }
+        return detail
     }
 }

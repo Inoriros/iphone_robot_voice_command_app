@@ -5,6 +5,7 @@ enum AppConfig {
     static let defaultToken = "2001"
     static let defaultPort = 8080
     static let commandPath = "/command"
+    static let batteryPath = "/battery"
     static let statusPath = "/status"
     static let commandSource = "iphone"
     static let stopCurrentTaskCommand = "STOP_CURRENT_TASK"

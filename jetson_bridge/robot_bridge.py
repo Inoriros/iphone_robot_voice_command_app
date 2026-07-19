@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import os
+import re
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -56,6 +57,13 @@ IMAGE_EVIDENCE_TOPIC = os.getenv(
 SIM_CONTROL_TOPIC = os.getenv("ROBOT_SIM_CONTROL_TOPIC", "/sim_control")
 LEGACY_STATUS_TOPIC = os.getenv("ROBOT_STATUS_TOPIC", "/task_status")
 AUTH_TOKEN = os.getenv("ROBOT_BRIDGE_TOKEN", "2001")
+BATTERY_CHECK_SCRIPT = os.getenv(
+    "SPOT_BATTERY_CHECK_SCRIPT",
+    "/root/spot_battery_check.sh",
+)
+BATTERY_CHECK_TIMEOUT_SECONDS = float(
+    os.getenv("SPOT_BATTERY_CHECK_TIMEOUT_SECONDS", "20")
+)
 ALLOW_NO_ROS = os.getenv("ROBOT_BRIDGE_ALLOW_NO_ROS", "false").lower() in {
     "1",
     "true",
@@ -81,6 +89,17 @@ class CommandResponse(BaseModel):
     published_topic: Optional[str] = None
     command_type: str = "task"
     text: Optional[str] = None
+
+
+class BatteryRequest(BaseModel):
+    token: str
+    source: str = "iphone"
+
+
+class BatteryResponse(BaseModel):
+    ok: bool
+    percentage: float
+    message: str
 
 
 @dataclass
@@ -358,6 +377,83 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="iPhone Robot Voice Command Bridge", lifespan=lifespan)
 
 
+def parse_battery_percentage(output: str) -> float:
+    match = re.search(
+        r"Battery\s+Remain:\s*([0-9]+(?:\.[0-9]+)?)\s*%",
+        output,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        raise ValueError("battery percentage was not present in script output")
+
+    percentage = float(match.group(1))
+    if not 0 <= percentage <= 100:
+        raise ValueError("battery percentage was outside the expected range")
+    return percentage
+
+
+async def read_spot_battery_percentage() -> float:
+    if not os.path.isfile(BATTERY_CHECK_SCRIPT):
+        logger.error("battery check script not found: %s", BATTERY_CHECK_SCRIPT)
+        raise HTTPException(
+            status_code=503,
+            detail="Spot battery check is not configured on the Jetson.",
+        )
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "/bin/bash",
+            BATTERY_CHECK_SCRIPT,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        logger.exception("could not start battery check: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Spot battery check could not be started.",
+        ) from exc
+
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=BATTERY_CHECK_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError as exc:
+        process.kill()
+        await process.communicate()
+        logger.error(
+            "battery check timed out after %.1f seconds",
+            BATTERY_CHECK_TIMEOUT_SECONDS,
+        )
+        raise HTTPException(
+            status_code=504,
+            detail="Spot did not return its battery level in time.",
+        ) from exc
+
+    output = stdout.decode("utf-8", errors="replace").strip()
+    error_output = stderr.decode("utf-8", errors="replace").strip()
+    if process.returncode != 0:
+        logger.error(
+            "battery check failed with exit code %s: %s",
+            process.returncode,
+            error_output or output,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Could not read the Spot battery level.",
+        )
+
+    try:
+        return parse_battery_percentage(output)
+    except ValueError as exc:
+        logger.error("unexpected battery check output: %s", output)
+        raise HTTPException(
+            status_code=502,
+            detail="Spot returned an unreadable battery level.",
+        ) from exc
+
+
 @app.get("/health")
 async def health() -> Dict[str, Any]:
     return {
@@ -410,6 +506,25 @@ async def command(request: CommandRequest) -> CommandResponse:
         published_topic=published_topic,
         command_type=command_type,
         text=command_name if is_control else command_text,
+    )
+
+
+@app.post("/battery", response_model=BatteryResponse)
+async def battery(request: BatteryRequest) -> BatteryResponse:
+    if request.token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    percentage = await read_spot_battery_percentage()
+    formatted_percentage = f"{percentage:g}%"
+    logger.info(
+        "reported Spot battery to %s: %s",
+        request.source,
+        formatted_percentage,
+    )
+    return BatteryResponse(
+        ok=True,
+        percentage=percentage,
+        message=f"Spot battery: {formatted_percentage}",
     )
 
 

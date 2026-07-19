@@ -20,11 +20,16 @@ struct ContentView: View {
         !jetsonIP.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var canCheckBattery: Bool {
+        canSendControlCommand && !robot.isCheckingBattery
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     connectionSection
+                    batterySection
                     statusSection
                     taskPlanSection
                     subtaskProofSection
@@ -85,6 +90,58 @@ struct ContentView: View {
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Disconnect")
             }
+        }
+    }
+
+    private var batterySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Spot Battery")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    Label {
+                        Text(
+                            robot.batteryMessage
+                                ?? (robot.isCheckingBattery
+                                    ? "Checking Spot battery…"
+                                    : "Battery not checked yet")
+                        )
+                        .font(.body)
+                    } icon: {
+                        Image(systemName: batteryIconName)
+                    }
+                    .foregroundStyle(batteryColor)
+
+                    Spacer()
+
+                    Button {
+                        robot.checkBattery(ip: jetsonIP, token: token)
+                    } label: {
+                        HStack(spacing: 6) {
+                            if robot.isCheckingBattery {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            Text(robot.isCheckingBattery ? "Checking…" : "Check Battery")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canCheckBattery)
+                }
+
+                if let percentage = robot.batteryPercentage {
+                    ProgressView(value: min(max(percentage, 0), 100), total: 100)
+                        .tint(batteryColor)
+                        .accessibilityLabel("Spot battery level")
+                        .accessibilityValue("\(percentage.formatted()) percent")
+                }
+            }
+            .padding()
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }
 
@@ -339,6 +396,40 @@ struct ContentView: View {
             return .red
         default:
             return .secondary
+        }
+    }
+
+    private var batteryIconName: String {
+        guard let percentage = robot.batteryPercentage else {
+            return "battery.0percent"
+        }
+
+        switch percentage {
+        case 75...:
+            return "battery.100percent"
+        case 50..<75:
+            return "battery.75percent"
+        case 25..<50:
+            return "battery.50percent"
+        case 1..<25:
+            return "battery.25percent"
+        default:
+            return "battery.0percent"
+        }
+    }
+
+    private var batteryColor: Color {
+        guard let percentage = robot.batteryPercentage else {
+            return .secondary
+        }
+
+        switch percentage {
+        case 50...:
+            return .green
+        case 20..<50:
+            return .orange
+        default:
+            return .red
         }
     }
 

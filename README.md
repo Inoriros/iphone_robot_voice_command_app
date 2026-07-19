@@ -15,6 +15,7 @@ iPhone app
 
 Jetson bridge
   - FastAPI POST /command
+  - FastAPI POST /battery
   - FastAPI WebSocket /status
   - ROS 2 publishers: /scenario and /task_control
   - ROS 2 subscribers: task status, /task_planning, and reasoning evidence
@@ -110,10 +111,11 @@ The iPhone app should use the Jetson's Wi-Fi IP address, for example:
 1. Enter the Jetson IP address.
 2. Enter the auth token. It must match `ROBOT_BRIDGE_TOKEN` on the Jetson.
 3. Tap **Connect** to open the status WebSocket.
-4. Tap **Start Listening** and speak a high-level robot command.
-5. Tap **Stop Listening**.
-6. Edit or verify the recognized text.
-7. Tap **Send**.
+4. Tap **Check Battery** at any time to show Spot's current battery percentage.
+5. Tap **Start Listening** and speak a high-level robot command.
+6. Tap **Stop Listening**.
+7. Edit or verify the recognized text.
+8. Tap **Send**.
 
 The app never auto-sends partial speech recognition results. Commands are only sent after the user taps **Send**.
 
@@ -171,6 +173,23 @@ Fixed task-control request bodies use the same endpoint and token:
   "source": "iphone"
 }
 ```
+
+The battery button sends:
+
+```text
+POST http://JETSON_IP:8080/battery
+```
+
+```json
+{
+  "token": "2001",
+  "source": "iphone"
+}
+```
+
+The bridge runs `/root/spot_battery_check.sh` by default and returns the parsed
+percentage. Set `SPOT_BATTERY_CHECK_SCRIPT` before starting the bridge if the
+script is installed elsewhere.
 
 The app receives status from:
 
@@ -232,6 +251,14 @@ Test command publishing:
 curl -X POST http://JETSON_IP:8080/command \
   -H "Content-Type: application/json" \
   -d '{"text":"search for the elevator","token":"2001","source":"iphone"}'
+```
+
+Test the battery endpoint:
+
+```bash
+curl -X POST http://JETSON_IP:8080/battery \
+  -H "Content-Type: application/json" \
+  -d '{"token":"2001","source":"manual-test"}'
 ```
 
 Watch the ROS 2 normal task topic:

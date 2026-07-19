@@ -5,6 +5,7 @@ FastAPI bridge for the iPhone app.
 It exposes:
 
 - `POST /command` for verified iPhone commands.
+- `POST /battery` for authenticated Spot battery checks.
 - `WebSocket /status` for live robot task status.
 - ROS 2 publisher: `/scenario` as `std_msgs/msg/String` for normal spoken tasks.
 - ROS 2 publisher: `/task_control` as `std_msgs/msg/String` for stop/pause/resume controls.
@@ -25,6 +26,24 @@ The bridge decides what to do:
 - Normal text, for example `find the red fire extinguisher`, is published directly to `/scenario`.
 - `STOP_CURRENT_TASK`, `STOP_CURRENT_SUBTASK`, `PAUSE_CURRENT_SUBTASK`, and `RESUME_CURRENT_SUBTASK` are published to `/task_control`.
 - Stop/pause commands also publish a non-active `/current_subtask` marker so following, VLM guidance, and navigation skills can preempt quickly. They do not stop the persistent exploration module or clear its history.
+
+The battery button sends an authenticated request to:
+
+```http
+POST http://JETSON_IP:8080/battery
+```
+
+```json
+{"token":"2001","source":"iphone"}
+```
+
+The bridge runs `/root/spot_battery_check.sh` and returns the parsed percentage.
+Override the script path or the 20-second timeout when needed:
+
+```bash
+export SPOT_BATTERY_CHECK_SCRIPT="/path/to/spot_battery_check.sh"
+export SPOT_BATTERY_CHECK_TIMEOUT_SECONDS="20"
+```
 
 The task planner listens to `/task_control`:
 
@@ -95,6 +114,14 @@ Your iPhone should connect to the Jetson IP address on the same Wi-Fi network.
 curl -X POST http://JETSON_IP:8080/command \
   -H "Content-Type: application/json" \
   -d '{"text":"search for the elevator","token":"2001","source":"iphone"}'
+```
+
+Test the Spot battery endpoint:
+
+```bash
+curl -X POST http://JETSON_IP:8080/battery \
+  -H "Content-Type: application/json" \
+  -d '{"token":"2001","source":"manual-test"}'
 ```
 
 On the Jetson, check the ROS topic:

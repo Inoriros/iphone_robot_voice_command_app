@@ -20,6 +20,17 @@ struct CommandResponse: Codable {
     }
 }
 
+struct BatteryRequest: Codable {
+    let token: String
+    let source: String
+}
+
+struct BatteryResponse: Codable {
+    let ok: Bool
+    let percentage: Double
+    let message: String
+}
+
 enum JSONValue: Codable {
     case string(String)
     case number(Double)
