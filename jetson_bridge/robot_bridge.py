@@ -359,10 +359,8 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
         self._state.latest_command_text = command_name
 
         self.get_logger().warning(
-            "published iPhone arm action to %s from %s: %s",
-            CURRENT_ARM_SUBTASK_TOPIC,
-            source,
-            message.data,
+            f"published iPhone arm action to {CURRENT_ARM_SUBTASK_TOPIC} "
+            f"from {source}: {message.data}"
         )
 
     def publish_human_waypoint(self, x: float, y: float, yaw: float, source: str) -> None:
@@ -379,13 +377,8 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
         self._human_waypoint_pub.publish(message)
 
         self.get_logger().warning(
-            "published iPhone body-local goal to %s from %s: "
-            "x=%.2f, y=%.2f, yaw=%.2f",
-            HUMAN_WAYPOINT_TOPIC,
-            source,
-            x,
-            y,
-            yaw,
+            f"published iPhone body-local goal to {HUMAN_WAYPOINT_TOPIC} "
+            f"from {source}: x={x:.2f}, y={y:.2f}, yaw={yaw:.2f}"
         )
 
     def publish_app_robot_mode(self, mode: str, source: str) -> None:
@@ -393,10 +386,8 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
         message.data = mode
         self._app_robot_mode_pub.publish(message)
         self.get_logger().warning(
-            "published iPhone robot mode to %s from %s: %s",
-            APP_ROBOT_MODE_TOPIC,
-            source,
-            mode.upper(),
+            f"published iPhone robot mode to {APP_ROBOT_MODE_TOPIC} "
+            f"from {source}: {mode.upper()}"
         )
 
     def publish_human_velocity(
@@ -413,13 +404,9 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
         self._human_velocity_pub.publish(message)
 
         self.get_logger().info(
-            "published iPhone deadman velocity to %s from %s: "
-            "forward=%.2f, strafe=%.2f, yaw=%.2f",
-            HUMAN_VELOCITY_TOPIC,
-            source,
-            forward,
-            strafe,
-            yaw,
+            f"published iPhone deadman velocity to {HUMAN_VELOCITY_TOPIC} "
+            f"from {source}: forward={forward:.2f}, "
+            f"strafe={strafe:.2f}, yaw={yaw:.2f}"
         )
 
     def publish_app_control_source(self, source_mode: str, source: str) -> None:
@@ -427,10 +414,8 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
         message.data = source_mode
         self._app_control_source_pub.publish(message)
         self.get_logger().warning(
-            "published iPhone control source to %s from %s: %s",
-            APP_CONTROL_SOURCE_TOPIC,
-            source,
-            source_mode.upper(),
+            f"published iPhone control source to {APP_CONTROL_SOURCE_TOPIC} "
+            f"from {source}: {source_mode.upper()}"
         )
 
     @staticmethod
