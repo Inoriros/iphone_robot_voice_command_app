@@ -7,6 +7,7 @@ enum AppConfig {
     static let commandPath = "/command"
     static let batteryPath = "/battery"
     static let manualControlPath = "/manual_control"
+    static let manualVelocityPath = "/manual_velocity"
     static let robotModePath = "/robot_mode"
     static let controlSourcePath = "/control_source"
     static let statusPath = "/status"

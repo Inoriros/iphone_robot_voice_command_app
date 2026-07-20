@@ -1,13 +1,36 @@
 import SwiftUI
 
+private enum HeldRobotMotion: Equatable {
+    case forward
+    case backward
+    case left
+    case right
+    case turnLeft
+    case turnRight
+
+    var command: (forward: Double, strafe: Double, yaw: Double) {
+        switch self {
+        case .forward: return (1, 0, 0)
+        case .backward: return (-1, 0, 0)
+        case .left: return (0, 1, 0)
+        case .right: return (0, -1, 0)
+        case .turnLeft: return (0, 0, 1)
+        case .turnRight: return (0, 0, -1)
+        }
+    }
+}
+
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var speech = SpeechRecognizer()
     @StateObject private var robot = RobotClient()
 
     @State private var jetsonIP = AppConfig.defaultJetsonIP
     @State private var token = AppConfig.defaultToken
     @State private var commandText = ""
-    @State private var manualHeadingRadians = 0.0
+    @State private var selectedWaypointYawRadians = 0.0
+    @State private var heldRobotMotion: HeldRobotMotion?
+    @State private var heldMotionTask: Task<Void, Never>?
     @State private var selectedWaypointLocation: CGPoint?
     @State private var selectedWaypointX = 0.0
     @State private var selectedWaypointY = 0.0
@@ -35,6 +58,12 @@ struct ContentView: View {
             && robot.connectionState == "Connected"
             && robot.phoneControlEnabled
             && !robot.isSendingManualControl
+    }
+
+    private var canUseDirectControl: Bool {
+        canSendControlCommand
+            && robot.connectionState == "Connected"
+            && robot.phoneControlEnabled
     }
 
     private var canSwitchControlSource: Bool {
@@ -77,6 +106,19 @@ struct ContentView: View {
                 if speech.isRecording {
                     commandText = newTranscript
                 }
+            }
+            .onChange(of: robot.phoneControlEnabled) { _, enabled in
+                if !enabled {
+                    stopHeldMotion()
+                }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase != .active {
+                    stopHeldMotion()
+                }
+            }
+            .onDisappear {
+                stopHeldMotion()
             }
         }
     }
@@ -455,6 +497,10 @@ struct ContentView: View {
 
                 Divider()
 
+                directMovementController
+
+                Divider()
+
                 waypointController
 
                 if let message = robot.manualControlMessage {
@@ -578,81 +624,80 @@ struct ContentView: View {
 
     private var rotationController: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("1. Relative Rotation")
+            Text("1. Direct Rotation")
                 .font(.subheadline.weight(.semibold))
 
-            Text("Drag around the dial, then send the selected yaw.")
+            Text("Press and hold Left or Right. Releasing the button stops rotation.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            GeometryReader { geometry in
-                let side = min(geometry.size.width, geometry.size.height)
-                let knobRadius = side * 0.37
-
-                ZStack {
-                    Circle()
-                        .fill(Color(.tertiarySystemGroupedBackground))
-                    Circle()
-                        .stroke(Color.accentColor.opacity(0.65), lineWidth: 3)
-
-                    ForEach(0..<12, id: \.self) { tick in
-                        Capsule()
-                            .fill(Color.secondary)
-                            .frame(width: 2, height: 9)
-                            .offset(y: -side * 0.43)
-                            .rotationEffect(.degrees(Double(tick) * 30))
-                    }
-
-                    Image(systemName: "location.north.fill")
-                        .font(.system(size: side * 0.30, weight: .bold))
-                        .foregroundStyle(Color.accentColor)
-                        .rotationEffect(.radians(-manualHeadingRadians))
-
-                    Circle()
-                        .fill(Color.accentColor)
-                        .frame(width: 18, height: 18)
-                        .offset(
-                            x: -CGFloat(sin(manualHeadingRadians)) * knobRadius,
-                            y: -CGFloat(cos(manualHeadingRadians)) * knobRadius
-                        )
-                }
-                .frame(width: side, height: side)
-                .contentShape(Circle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            updateManualHeading(at: value.location, side: side)
-                        }
-                )
-                .opacity(robot.phoneControlEnabled ? 1 : 0.45)
-                .allowsHitTesting(canUsePhoneControl)
-                .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
-            }
-            .frame(height: 190)
-
-            HStack {
-                Text("Selected: \(manualHeadingDegrees)°")
-                    .font(.subheadline.monospacedDigit())
-
-                Spacer()
-
-                Button {
-                    sendManualGoal(x: 0, y: 0, yaw: manualHeadingRadians)
-                } label: {
-                    Label("Rotate", systemImage: "rotate.right")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!canUsePhoneControl)
+            HStack(spacing: 12) {
+                deadmanButton(.turnLeft, label: "Left", icon: "rotate.left")
+                deadmanButton(.turnRight, label: "Right", icon: "rotate.right")
             }
         }
     }
 
-    private var waypointController: some View {
+    private var directMovementController: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("2. Body-Relative Waypoint")
+            Text("2. Direct Movement")
                 .font(.subheadline.weight(.semibold))
 
-            Text("Tap the square: up is forward and left is the robot's left. The center arrow is Spot.")
+            Text("Press and hold an arrow to move. Releasing it stops the robot.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 10) {
+                deadmanButton(.forward, label: "Forward", icon: "arrow.up")
+                    .frame(maxWidth: 150)
+
+                HStack(spacing: 12) {
+                    deadmanButton(.left, label: "Left", icon: "arrow.left")
+                    deadmanButton(.right, label: "Right", icon: "arrow.right")
+                }
+
+                deadmanButton(.backward, label: "Backward", icon: "arrow.down")
+                    .frame(maxWidth: 150)
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func deadmanButton(
+        _ motion: HeldRobotMotion,
+        label: String,
+        icon: String
+    ) -> some View {
+        Button(action: {}) {
+            Label(label, systemImage: icon)
+                .font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 54)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(heldRobotMotion == motion ? Color.orange : Color.accentColor)
+        .opacity(canUseDirectControl ? 1 : 0.45)
+        .onLongPressGesture(
+            minimumDuration: 0,
+            maximumDistance: .infinity,
+            pressing: { isPressing in
+                if isPressing {
+                    beginHeldMotion(motion)
+                } else {
+                    endHeldMotion(motion)
+                }
+            },
+            perform: {}
+        )
+        .disabled(!canUseDirectControl)
+        .accessibilityHint("Press and hold to move; release to stop")
+    }
+
+    private var waypointController: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("3. Body-Relative Waypoint")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Tap the square. Spot will face along the line from the center to the target.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -692,6 +737,16 @@ struct ContentView: View {
                         .position(x: side / 2, y: 14)
 
                     if let location = selectedWaypointLocation {
+                        Path { path in
+                            path.move(to: CGPoint(x: side / 2, y: side / 2))
+                            path.addLine(
+                                to: CGPoint(x: location.x * side, y: location.y * side)
+                            )
+                        }
+                        .stroke(
+                            Color.accentColor.opacity(0.75),
+                            style: StrokeStyle(lineWidth: 3, dash: [7, 5])
+                        )
                         Circle()
                             .fill(Color.accentColor)
                             .frame(width: 18, height: 18)
@@ -725,7 +780,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
 
             if selectedWaypointLocation != nil {
-                Text("Last goal: forward \(selectedWaypointX.formatted(.number.precision(.fractionLength(2)))) m, left \(selectedWaypointY.formatted(.number.precision(.fractionLength(2)))) m, yaw \(manualHeadingDegrees)°")
+                Text("Last goal: forward \(selectedWaypointX.formatted(.number.precision(.fractionLength(2)))) m, left \(selectedWaypointY.formatted(.number.precision(.fractionLength(2)))) m, yaw \(selectedWaypointYawDegrees)°")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -867,16 +922,56 @@ struct ContentView: View {
         return "Waiting for robot mode authority."
     }
 
-    private var manualHeadingDegrees: Int {
-        Int((manualHeadingRadians * 180 / Double.pi).rounded())
+    private var selectedWaypointYawDegrees: Int {
+        Int((selectedWaypointYawRadians * 180 / Double.pi).rounded())
     }
 
-    private func updateManualHeading(at location: CGPoint, side: CGFloat) {
-        let center = side / 2
-        let left = center - location.x
-        let forward = center - location.y
-        guard (left * left + forward * forward).squareRoot() > 10 else { return }
-        manualHeadingRadians = atan2(Double(left), Double(forward))
+    private func beginHeldMotion(_ motion: HeldRobotMotion) {
+        guard canUseDirectControl, heldRobotMotion != motion else { return }
+        heldMotionTask?.cancel()
+        heldRobotMotion = motion
+        sendHeldMotion(motion)
+        heldMotionTask = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                guard !Task.isCancelled,
+                      heldRobotMotion == motion,
+                      canUseDirectControl else {
+                    return
+                }
+                sendHeldMotion(motion)
+            }
+        }
+    }
+
+    private func endHeldMotion(_ motion: HeldRobotMotion) {
+        guard heldRobotMotion == motion else { return }
+        stopHeldMotion()
+    }
+
+    private func stopHeldMotion() {
+        guard heldRobotMotion != nil || heldMotionTask != nil else { return }
+        heldMotionTask?.cancel()
+        heldMotionTask = nil
+        heldRobotMotion = nil
+        robot.sendManualVelocity(
+            ip: jetsonIP,
+            token: token,
+            forward: 0,
+            strafe: 0,
+            yaw: 0
+        )
+    }
+
+    private func sendHeldMotion(_ motion: HeldRobotMotion) {
+        let command = motion.command
+        robot.sendManualVelocity(
+            ip: jetsonIP,
+            token: token,
+            forward: command.forward,
+            strafe: command.strafe,
+            yaw: command.yaw
+        )
     }
 
     private func sendWaypointTap(at location: CGPoint, side: CGFloat) {
@@ -893,10 +988,11 @@ struct ContentView: View {
         )
         selectedWaypointX = Double((half - clampedY) / half) * range
         selectedWaypointY = Double((half - clampedX) / half) * range
+        selectedWaypointYawRadians = atan2(selectedWaypointY, selectedWaypointX)
         sendManualGoal(
             x: selectedWaypointX,
             y: selectedWaypointY,
-            yaw: manualHeadingRadians
+            yaw: selectedWaypointYawRadians
         )
     }
 

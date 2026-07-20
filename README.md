@@ -17,10 +17,11 @@ Jetson bridge
   - FastAPI POST /command
   - FastAPI POST /battery
   - FastAPI POST /manual_control
+  - FastAPI POST /manual_velocity
   - FastAPI POST /robot_mode
   - FastAPI POST /control_source
   - FastAPI WebSocket /status
-  - ROS 2 publishers: /scenario, /task_control, /current_arm_subtask, /human_way_point, /spot/app_robot_mode, and /spot/app_control_source
+  - ROS 2 publishers: /scenario, /task_control, /current_arm_subtask, /human_way_point, /human_velocity_command, /spot/app_robot_mode, and /spot/app_control_source
   - ROS 2 subscribers: task status, /task_planning, and reasoning evidence
 ```
 
@@ -149,19 +150,24 @@ The app receives live mode authority from `/spot/control_state`:
   **SIT**/**STAND**/**WALK** mode buttons.
 - The user must explicitly select both a source and a mode after SBUS is lost.
 - **Navigation** + **WALK** enables autonomous `/way_point` goals.
-- **Phone** + **WALK** enables the rotation dial and body-relative waypoint panel.
+- **Phone** + **WALK** enables direct rotation, direct movement, and the
+  body-relative waypoint panel.
 - **Stop** cancels base motion, clears active waypoints, and commands Spot to stand.
 - The first valid recovered SBUS packet stops any app trajectory and returns
   both switches to the physical controller.
 
-- **Relative Rotation:** drag the circular dial and tap **Rotate**. The yaw is
-  relative to Spot's current heading.
+- **Direct Rotation:** press and hold **Left** or **Right**; release to stop.
+- **Direct Movement:** press and hold an arrow; release to stop.
 - **Body-Relative Waypoint:** choose a range from 2–6 m, then tap the square
   panel. Its fixed center arrow is Spot, up is forward, and left is Spot's left.
+  The target yaw follows the center-to-target line.
 
-The bridge publishes both controls as body-frame `PoseStamped` messages on
-`/human_way_point`. While SBUS is connected in SBUS + WALK, moving any physical
-stick cancels the phone trajectory immediately.
+The bridge publishes direct motion as normalized `Twist` messages on
+`/human_velocity_command` and panel goals as body-frame `PoseStamped` messages
+on `/human_way_point`. Direct commands refresh while a button is held. Release
+publishes zero velocity, and the Spot controller also stops after 0.35 seconds
+without a refresh. While SBUS is connected in SBUS + WALK, moving any physical
+stick cancels phone motion immediately.
 
 ## Network API
 
@@ -243,6 +249,26 @@ POST http://JETSON_IP:8080/manual_control
 
 Coordinates use Spot's body frame: `x` is forward, `y` is left, and `yaw` is
 relative to the current heading in radians.
+
+Direct press-and-hold controls send normalized velocity refreshes to:
+
+```text
+POST http://JETSON_IP:8080/manual_velocity
+```
+
+```json
+{
+  "forward": 1.0,
+  "strafe": 0.0,
+  "yaw": 0.0,
+  "token": "2001",
+  "source": "iphone"
+}
+```
+
+Values are in `[-1, 1]`. The app sends a zero command on release. The controller
+limits actual speed and stops if refreshes time out.
+
 
 Fallback robot-mode controls send:
 
@@ -337,6 +363,9 @@ std_msgs/msg/String
 
 /human_way_point
 geometry_msgs/msg/PoseStamped
+
+/human_velocity_command
+geometry_msgs/msg/Twist
 
 /spot/app_robot_mode
 std_msgs/msg/String
@@ -442,7 +471,7 @@ export ROBOT_BRIDGE_ALLOW_NO_ROS=true
 python3 robot_bridge.py
 ```
 
-In this mode the bridge accepts `/command`, `/manual_control`, `/robot_mode`, and `/control_source` requests and supports WebSocket status testing, but it does not publish to ROS 2.
+In this mode the bridge accepts `/command`, `/manual_control`, `/manual_velocity`, `/robot_mode`, and `/control_source` requests and supports WebSocket status testing, but it does not publish to ROS 2.
 
 You can push fake status updates with:
 

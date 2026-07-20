@@ -20,7 +20,7 @@ try:
     import rclpy
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-    from geometry_msgs.msg import PoseStamped
+    from geometry_msgs.msg import PoseStamped, Twist
     from sensor_msgs.msg import CompressedImage
     from std_msgs.msg import String
 
@@ -32,6 +32,7 @@ except ImportError:
     QoSProfile = None
     ReliabilityPolicy = None
     PoseStamped = None
+    Twist = None
     CompressedImage = None
     String = None
     ROS_AVAILABLE = False
@@ -49,6 +50,10 @@ CONTROL_TOPIC = os.getenv("ROBOT_CONTROL_TOPIC", "/task_control")
 CURRENT_SUBTASK_TOPIC = os.getenv("ROBOT_CURRENT_SUBTASK_TOPIC", "/current_subtask")
 CURRENT_ARM_SUBTASK_TOPIC = os.getenv("ROBOT_CURRENT_ARM_SUBTASK_TOPIC", "/current_arm_subtask")
 HUMAN_WAYPOINT_TOPIC = os.getenv("ROBOT_HUMAN_WAYPOINT_TOPIC", "/human_way_point")
+HUMAN_VELOCITY_TOPIC = os.getenv(
+    "ROBOT_HUMAN_VELOCITY_TOPIC",
+    "/human_velocity_command",
+)
 APP_ROBOT_MODE_TOPIC = os.getenv("ROBOT_APP_MODE_TOPIC", "/spot/app_robot_mode")
 APP_CONTROL_SOURCE_TOPIC = os.getenv("ROBOT_APP_SOURCE_TOPIC", "/spot/app_control_source")
 CONTROL_STATE_TOPIC = os.getenv("ROBOT_CONTROL_STATE_TOPIC", "/spot/control_state")
@@ -153,6 +158,20 @@ class ManualControlResponse(BaseModel):
     message: str
 
 
+class ManualVelocityRequest(BaseModel):
+    forward: float = Field(..., ge=-1.0, le=1.0)
+    strafe: float = Field(..., ge=-1.0, le=1.0)
+    yaw: float = Field(..., ge=-1.0, le=1.0)
+    token: str
+    source: str = "iphone"
+
+
+class ManualVelocityResponse(BaseModel):
+    ok: bool
+    published_topic: Optional[str] = None
+    message: str
+
+
 class RobotModeRequest(BaseModel):
     mode: Literal["sit", "stand", "walk"]
     token: str
@@ -247,6 +266,7 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
         self._human_waypoint_pub = self.create_publisher(PoseStamped, HUMAN_WAYPOINT_TOPIC, 10)
         self._app_robot_mode_pub = self.create_publisher(String, APP_ROBOT_MODE_TOPIC, 10)
         self._app_control_source_pub = self.create_publisher(String, APP_CONTROL_SOURCE_TOPIC, 10)
+        self._human_velocity_pub = self.create_publisher(Twist, HUMAN_VELOCITY_TOPIC, 10)
 
         for topic in dict.fromkeys(
             [
@@ -289,6 +309,7 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             f"manual goals -> {HUMAN_WAYPOINT_TOPIC}, "
             f"app mode -> {APP_ROBOT_MODE_TOPIC}, "
             f"app source -> {APP_CONTROL_SOURCE_TOPIC}, "
+            f"manual velocity -> {HUMAN_VELOCITY_TOPIC}, "
             f"status <- {CURRENT_SUBTASK_TOPIC}, {SUBTASK_STATUS_TOPIC}, "
             f"{TASK_PLANNING_TOPIC}, {PROMPT_EVIDENCE_TOPIC}, "
             f"{IMAGE_EVIDENCE_TOPIC}, {SIM_CONTROL_TOPIC}"
@@ -376,6 +397,29 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             APP_ROBOT_MODE_TOPIC,
             source,
             mode.upper(),
+        )
+
+    def publish_human_velocity(
+        self,
+        forward: float,
+        strafe: float,
+        yaw: float,
+        source: str,
+    ) -> None:
+        message = Twist()
+        message.linear.x = forward
+        message.linear.y = strafe
+        message.angular.z = yaw
+        self._human_velocity_pub.publish(message)
+
+        self.get_logger().info(
+            "published iPhone deadman velocity to %s from %s: "
+            "forward=%.2f, strafe=%.2f, yaw=%.2f",
+            HUMAN_VELOCITY_TOPIC,
+            source,
+            forward,
+            strafe,
+            yaw,
         )
 
     def publish_app_control_source(self, source_mode: str, source: str) -> None:
@@ -619,6 +663,7 @@ async def health() -> Dict[str, Any]:
         "app_robot_mode_topic": APP_ROBOT_MODE_TOPIC,
         "app_control_source_topic": APP_CONTROL_SOURCE_TOPIC,
         "control_state_topic": CONTROL_STATE_TOPIC,
+        "human_velocity_topic": HUMAN_VELOCITY_TOPIC,
         "manual_control_axis_limit_m": MANUAL_CONTROL_AXIS_LIMIT_METERS,
         "subtask_status_topic": SUBTASK_STATUS_TOPIC,
         "task_planning_topic": TASK_PLANNING_TOPIC,
@@ -708,6 +753,46 @@ async def manual_control(request: ManualControlRequest) -> ManualControlResponse
         message="Manual goal published. Spot requires WALK with phone control enabled.",
     )
 
+
+@app.post("/manual_velocity", response_model=ManualVelocityResponse)
+async def manual_velocity(request: ManualVelocityRequest) -> ManualVelocityResponse:
+    if request.token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    published_topic: Optional[str] = None
+    if ros_node is None:
+        if not ALLOW_NO_ROS:
+            raise HTTPException(status_code=503, detail="ROS 2 bridge is not available")
+        logger.info(
+            "accepted manual velocity in no-ROS test mode: "
+            "forward=%.2f, strafe=%.2f, yaw=%.2f",
+            request.forward,
+            request.strafe,
+            request.yaw,
+        )
+    else:
+        ros_node.publish_human_velocity(
+            request.forward,
+            request.strafe,
+            request.yaw,
+            request.source,
+        )
+        published_topic = HUMAN_VELOCITY_TOPIC
+
+    is_stop = max(
+        abs(request.forward),
+        abs(request.strafe),
+        abs(request.yaw),
+    ) < 1e-6
+    return ManualVelocityResponse(
+        ok=True,
+        published_topic=published_topic,
+        message=(
+            "Direct motion stopped."
+            if is_stop
+            else "Deadman velocity refreshed; release the button to stop."
+        ),
+    )
 
 @app.post("/robot_mode", response_model=RobotModeResponse)
 async def robot_mode(request: RobotModeRequest) -> RobotModeResponse:

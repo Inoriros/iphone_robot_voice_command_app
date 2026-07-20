@@ -1,5 +1,11 @@
 import Foundation
 
+private struct QueuedManualVelocityCommand {
+    let request: URLRequest
+    let host: String
+    let isStop: Bool
+}
+
 @MainActor
 final class RobotClient: ObservableObject {
     @Published var connectionState = "Disconnected"
@@ -35,6 +41,8 @@ final class RobotClient: ObservableObject {
     private var webSocketTask: URLSessionWebSocketTask?
     private let jsonDecoder = JSONDecoder()
     private let jsonEncoder = JSONEncoder()
+    private var manualVelocityTask: URLSessionDataTask?
+    private var pendingManualVelocityCommand: QueuedManualVelocityCommand?
 
     func sendCommand(ip: String, token: String, text: String) {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -272,6 +280,116 @@ final class RobotClient: ObservableObject {
         }.resume()
     }
 
+    func sendManualVelocity(
+        ip: String,
+        token: String,
+        forward: Double,
+        strafe: Double,
+        yaw: Double
+    ) {
+        let trimmedIP = normalizedHost(from: ip)
+        let isStop = max(abs(forward), abs(strafe), abs(yaw)) < 0.001
+
+        guard isStop || phoneControlEnabled else {
+            lastError = "Direct motion requires the Phone control source and WALK mode."
+            return
+        }
+        guard !trimmedIP.isEmpty else {
+            lastError = "Jetson IP is required."
+            return
+        }
+        guard forward.isFinite, strafe.isFinite, yaw.isFinite else {
+            lastError = "Direct motion contains an invalid value."
+            return
+        }
+        guard abs(forward) <= 1, abs(strafe) <= 1, abs(yaw) <= 1 else {
+            lastError = "Direct motion is outside the normalized range."
+            return
+        }
+        guard let url = manualVelocityURL(ip: trimmedIP) else {
+            lastError = "Jetson IP is invalid."
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 2
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            request.httpBody = try jsonEncoder.encode(
+                ManualVelocityRequest(
+                    forward: forward,
+                    strafe: strafe,
+                    yaw: yaw,
+                    token: token,
+                    source: AppConfig.commandSource
+                )
+            )
+        } catch {
+            lastError = "Could not encode direct motion: \(error.localizedDescription)"
+            return
+        }
+
+        let command = QueuedManualVelocityCommand(
+            request: request,
+            host: trimmedIP,
+            isStop: isStop
+        )
+        if manualVelocityTask != nil {
+            pendingManualVelocityCommand = command
+            return
+        }
+        startManualVelocityCommand(command)
+    }
+
+    private func startManualVelocityCommand(_ command: QueuedManualVelocityCommand) {
+        let task = URLSession.shared.dataTask(with: command.request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                defer {
+                    self.manualVelocityTask = nil
+                    if let pending = self.pendingManualVelocityCommand {
+                        self.pendingManualVelocityCommand = nil
+                        self.startManualVelocityCommand(pending)
+                    }
+                }
+
+                if let error {
+                    self.lastError = "Cannot reach Jetson at \(command.host):\(AppConfig.defaultPort). \(error.localizedDescription)"
+                    return
+                }
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    self.lastError = "Jetson returned an invalid direct-motion response."
+                    return
+                }
+
+                switch httpResponse.statusCode {
+                case 200:
+                    guard let data,
+                          let response = try? self.jsonDecoder.decode(
+                              ManualVelocityResponse.self,
+                              from: data
+                          ),
+                          response.ok else {
+                        self.lastError = "Jetson returned an unreadable direct-motion response."
+                        return
+                    }
+                    if command.isStop {
+                        self.manualControlMessage = response.message
+                    }
+                case 401:
+                    self.lastError = "Invalid token. Please check the token on the Jetson bridge."
+                default:
+                    self.lastError = self.bridgeErrorDetail(from: data)
+                        ?? "Jetson returned HTTP \(httpResponse.statusCode) for direct motion."
+                }
+            }
+        }
+        manualVelocityTask = task
+        task.resume()
+    }
+
     func sendRobotMode(ip: String, token: String, mode: String) {
         let trimmedIP = normalizedHost(from: ip)
         let normalizedMode = mode.lowercased()
@@ -469,6 +587,9 @@ final class RobotClient: ObservableObject {
     private func disconnectStatusWebSocket(updateState: Bool) {
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         webSocketTask = nil
+        manualVelocityTask?.cancel()
+        manualVelocityTask = nil
+        pendingManualVelocityCommand = nil
         phoneControlEnabled = false
         controlSource = "unknown"
         physicalControlSource = "unknown"
@@ -641,6 +762,10 @@ final class RobotClient: ObservableObject {
 
     private func manualControlURL(ip: String) -> URL? {
         URL(string: "http://\(ip):\(AppConfig.defaultPort)\(AppConfig.manualControlPath)")
+    }
+
+    private func manualVelocityURL(ip: String) -> URL? {
+        URL(string: "http://\(ip):\(AppConfig.defaultPort)\(AppConfig.manualVelocityPath)")
     }
 
     private func robotModeURL(ip: String) -> URL? {

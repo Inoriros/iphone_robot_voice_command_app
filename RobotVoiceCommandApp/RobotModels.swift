@@ -51,6 +51,26 @@ struct ManualControlResponse: Codable {
     }
 }
 
+struct ManualVelocityRequest: Codable {
+    let forward: Double
+    let strafe: Double
+    let yaw: Double
+    let token: String
+    let source: String
+}
+
+struct ManualVelocityResponse: Codable {
+    let ok: Bool
+    let publishedTopic: String?
+    let message: String
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case publishedTopic = "published_topic"
+        case message
+    }
+}
+
 struct RobotModeRequest: Codable {
     let mode: String
     let token: String

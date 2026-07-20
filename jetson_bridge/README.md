@@ -7,6 +7,7 @@ It exposes:
 - `POST /command` for verified iPhone commands.
 - `POST /battery` for authenticated Spot battery checks.
 - `POST /manual_control` for authenticated body-relative phone motion goals.
+- `POST /manual_velocity` for authenticated press-and-hold velocity refreshes.
 - `POST /robot_mode` for authenticated app fallback mode requests.
 - `POST /control_source` for authenticated app fallback source requests.
 - `WebSocket /status` for live robot task status.
@@ -15,6 +16,7 @@ It exposes:
 - ROS 2 fallback publisher: `/current_subtask` for immediate foreground-skill preemption.
 - ROS 2 publisher: `/current_arm_subtask` for fixed arm actions.
 - ROS 2 publisher: `/human_way_point` as body-frame `geometry_msgs/msg/PoseStamped`.
+- ROS 2 publisher: `/human_velocity_command` as normalized `geometry_msgs/msg/Twist`.
 - ROS 2 publisher: `/spot/app_robot_mode` as `std_msgs/msg/String`.
 - ROS 2 publisher: `/spot/app_control_source` as `std_msgs/msg/String`.
 - ROS 2 status subscribers: `/spot/control_state`, `/current_subtask`, `/subtask_status`, `/task_planning`, `/subtask_prompt_evidance`, `/subtask_image_evidence`, `/sim_control`, plus optional `/task_status`.
@@ -35,20 +37,26 @@ The bridge decides what to do:
 - `ARM_RELAX`, `ARM_BUTTON`, and `ARM_PRESS` publish fixed action JSON to `/current_arm_subtask`.
 - Stop/pause commands also publish a non-active `/current_subtask` marker so following, VLM guidance, and navigation skills can preempt quickly. They do not stop the persistent exploration module or clear its history.
 
-Phone rotation and panel taps send `x`, `y`, and `yaw` to `/manual_control`.
+Panel taps send `x`, `y`, and `yaw` to `/manual_control`.
 The bridge converts them into a body-frame `PoseStamped` on `/human_way_point`.
-The Spot controller accepts that topic in WALK with either physical SBUS authority
-or the explicit app **Phone** source.
+The app calculates yaw with `atan2(y, x)`, so Spot faces along the line from the
+panel center to the target.
 
-When `/spot/control_state` reports SBUS unavailable, the app can POST `sit`,
-`stand`, or `walk` to `/robot_mode`. The bridge publishes the mode to
-`/spot/app_robot_mode`. It can also POST `waypoint`, `hold`, or `sbus` to
-`/control_source`, which publishes to `/spot/app_control_source`. Those values map
-to the app labels **Navigation**, **Stop**, and **Phone**. Navigation + WALK enables
-autonomous `/way_point` goals; Phone + WALK enables `/human_way_point`; Stop cancels
-base motion and commands Spot to stand. The Spot controller rejects both fallback
-topics while SBUS is healthy. The first valid recovered packet stops app motion
-and restores both physical switches.
+Press-and-hold rotation and movement buttons POST normalized `forward`, `strafe`,
+and `yaw` values to `/manual_velocity`. The bridge publishes a `Twist` on
+`/human_velocity_command`. The app refreshes the command every 120 ms, publishes
+zero on release, and the Spot controller stops after 0.35 seconds without a refresh.
+Physical SBUS stick motion takes priority.
+
+The Spot controller accepts both phone motion topics in WALK with physical SBUS
+authority or the explicit app **Phone** source. When `/spot/control_state` reports
+SBUS unavailable, the app can POST `sit`, `stand`, or `walk` to `/robot_mode`.
+It can also POST `waypoint`, `hold`, or `sbus` to `/control_source`; those
+values map to **Navigation**, **Stop**, and **Phone**. Navigation + WALK enables
+autonomous `/way_point` goals; Phone + WALK enables phone motion; Stop cancels
+base motion and commands Spot to stand. The controller rejects both fallback
+switch topics while SBUS is healthy. The first valid recovered packet stops app
+motion and restores both physical switches.
 
 The panel uses `x` forward, `y` left, and relative yaw in radians. The app lets
 the user select a range from 2–6 m. The default HTTP safety limit is ±6 m per
@@ -246,7 +254,7 @@ export ROBOT_BRIDGE_ALLOW_NO_ROS=true
 python3 robot_bridge.py
 ```
 
-In this mode `/command`, `/manual_control`, `/robot_mode`, and `/control_source` accept requests but do not publish to ROS.
+In this mode `/command`, `/manual_control`, `/manual_velocity`, `/robot_mode`, and `/control_source` accept requests but do not publish to ROS.
 
 ## Troubleshooting
 
