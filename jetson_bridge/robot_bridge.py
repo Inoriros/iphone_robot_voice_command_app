@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -19,6 +20,7 @@ try:
     import rclpy
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+    from geometry_msgs.msg import PoseStamped
     from sensor_msgs.msg import CompressedImage
     from std_msgs.msg import String
 
@@ -29,6 +31,7 @@ except ImportError:
     DurabilityPolicy = None
     QoSProfile = None
     ReliabilityPolicy = None
+    PoseStamped = None
     CompressedImage = None
     String = None
     ROS_AVAILABLE = False
@@ -45,6 +48,8 @@ TASK_TOPIC = os.getenv("ROBOT_TASK_TOPIC", os.getenv("ROBOT_COMMAND_TOPIC", "/sc
 CONTROL_TOPIC = os.getenv("ROBOT_CONTROL_TOPIC", "/task_control")
 CURRENT_SUBTASK_TOPIC = os.getenv("ROBOT_CURRENT_SUBTASK_TOPIC", "/current_subtask")
 CURRENT_ARM_SUBTASK_TOPIC = os.getenv("ROBOT_CURRENT_ARM_SUBTASK_TOPIC", "/current_arm_subtask")
+HUMAN_WAYPOINT_TOPIC = os.getenv("ROBOT_HUMAN_WAYPOINT_TOPIC", "/human_way_point")
+CONTROL_STATE_TOPIC = os.getenv("ROBOT_CONTROL_STATE_TOPIC", "/spot/control_state")
 SUBTASK_STATUS_TOPIC = os.getenv("ROBOT_SUBTASK_STATUS_TOPIC", "/subtask_status")
 TASK_PLANNING_TOPIC = os.getenv("ROBOT_TASK_PLANNING_TOPIC", "/task_planning")
 PROMPT_EVIDENCE_TOPIC = os.getenv(
@@ -64,6 +69,9 @@ BATTERY_CHECK_SCRIPT = os.getenv(
 )
 BATTERY_CHECK_TIMEOUT_SECONDS = float(
     os.getenv("SPOT_BATTERY_CHECK_TIMEOUT_SECONDS", "20")
+)
+MANUAL_CONTROL_AXIS_LIMIT_METERS = float(
+    os.getenv("ROBOT_MANUAL_CONTROL_AXIS_LIMIT_METERS", "2")
 )
 ALLOW_NO_ROS = os.getenv("ROBOT_BRIDGE_ALLOW_NO_ROS", "false").lower() in {
     "1",
@@ -118,6 +126,28 @@ class BatteryRequest(BaseModel):
 class BatteryResponse(BaseModel):
     ok: bool
     percentage: float
+    message: str
+
+
+class ManualControlRequest(BaseModel):
+    x: float = Field(
+        ...,
+        ge=-MANUAL_CONTROL_AXIS_LIMIT_METERS,
+        le=MANUAL_CONTROL_AXIS_LIMIT_METERS,
+    )
+    y: float = Field(
+        ...,
+        ge=-MANUAL_CONTROL_AXIS_LIMIT_METERS,
+        le=MANUAL_CONTROL_AXIS_LIMIT_METERS,
+    )
+    yaw: float = Field(..., ge=-math.pi, le=math.pi)
+    token: str
+    source: str = "iphone"
+
+
+class ManualControlResponse(BaseModel):
+    ok: bool
+    published_topic: Optional[str] = None
     message: str
 
 
@@ -186,6 +216,7 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             CURRENT_ARM_SUBTASK_TOPIC,
             transient_qos,
         )
+        self._human_waypoint_pub = self.create_publisher(PoseStamped, HUMAN_WAYPOINT_TOPIC, 10)
 
         for topic in dict.fromkeys(
             [
@@ -203,6 +234,7 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
         for topic in dict.fromkeys(
             [
                 CURRENT_SUBTASK_TOPIC,
+                CONTROL_STATE_TOPIC,
                 TASK_PLANNING_TOPIC,
                 PROMPT_EVIDENCE_TOPIC,
             ]
@@ -224,6 +256,7 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             "bridge ready: "
             f"tasks -> {TASK_TOPIC}, controls -> {CONTROL_TOPIC}, "
             f"arm actions -> {CURRENT_ARM_SUBTASK_TOPIC}, "
+            f"manual goals -> {HUMAN_WAYPOINT_TOPIC}, "
             f"status <- {CURRENT_SUBTASK_TOPIC}, {SUBTASK_STATUS_TOPIC}, "
             f"{TASK_PLANNING_TOPIC}, {PROMPT_EVIDENCE_TOPIC}, "
             f"{IMAGE_EVIDENCE_TOPIC}, {SIM_CONTROL_TOPIC}"
@@ -277,6 +310,29 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             CURRENT_ARM_SUBTASK_TOPIC,
             source,
             message.data,
+        )
+
+    def publish_human_waypoint(self, x: float, y: float, yaw: float, source: str) -> None:
+        message = PoseStamped()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.header.frame_id = "body"
+        message.pose.position.x = x
+        message.pose.position.y = y
+        message.pose.position.z = 0.0
+        message.pose.orientation.x = 0.0
+        message.pose.orientation.y = 0.0
+        message.pose.orientation.z = math.sin(yaw / 2.0)
+        message.pose.orientation.w = math.cos(yaw / 2.0)
+        self._human_waypoint_pub.publish(message)
+
+        self.get_logger().warning(
+            "published iPhone body-local goal to %s from %s: "
+            "x=%.2f, y=%.2f, yaw=%.2f",
+            HUMAN_WAYPOINT_TOPIC,
+            source,
+            x,
+            y,
+            yaw,
         )
 
     @staticmethod
@@ -342,6 +398,8 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
 
         if topic == CURRENT_SUBTASK_TOPIC:
             payload["type"] = "current_subtask"
+        elif topic == CONTROL_STATE_TOPIC:
+            payload["type"] = "control_state"
         elif topic == SUBTASK_STATUS_TOPIC:
             payload["type"] = "subtask_status"
         elif topic == TASK_PLANNING_TOPIC:
@@ -503,6 +561,9 @@ async def health() -> Dict[str, Any]:
         "control_topic": CONTROL_TOPIC,
         "current_subtask_topic": CURRENT_SUBTASK_TOPIC,
         "current_arm_subtask_topic": CURRENT_ARM_SUBTASK_TOPIC,
+        "human_waypoint_topic": HUMAN_WAYPOINT_TOPIC,
+        "control_state_topic": CONTROL_STATE_TOPIC,
+        "manual_control_axis_limit_m": MANUAL_CONTROL_AXIS_LIMIT_METERS,
         "subtask_status_topic": SUBTASK_STATUS_TOPIC,
         "task_planning_topic": TASK_PLANNING_TOPIC,
         "prompt_evidence_topic": PROMPT_EVIDENCE_TOPIC,
@@ -561,6 +622,37 @@ async def command(request: CommandRequest) -> CommandResponse:
     )
 
 
+@app.post("/manual_control", response_model=ManualControlResponse)
+async def manual_control(request: ManualControlRequest) -> ManualControlResponse:
+    if request.token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    published_topic: Optional[str] = None
+    if ros_node is None:
+        if not ALLOW_NO_ROS:
+            raise HTTPException(status_code=503, detail="ROS 2 bridge is not available")
+        logger.info(
+            "accepted manual control in no-ROS test mode: x=%.2f, y=%.2f, yaw=%.2f",
+            request.x,
+            request.y,
+            request.yaw,
+        )
+    else:
+        ros_node.publish_human_waypoint(
+            request.x,
+            request.y,
+            request.yaw,
+            request.source,
+        )
+        published_topic = HUMAN_WAYPOINT_TOPIC
+
+    return ManualControlResponse(
+        ok=True,
+        published_topic=published_topic,
+        message="Manual goal published. Spot requires SBUS + WALK mode.",
+    )
+
+
 @app.post("/battery", response_model=BatteryResponse)
 async def battery(request: BatteryRequest) -> BatteryResponse:
     if request.token != AUTH_TOKEN:
@@ -590,6 +682,7 @@ async def status_stream(websocket: WebSocket) -> None:
             latest_status_text = state.latest_status_text
 
         replay_order = (
+            CONTROL_STATE_TOPIC,
             TASK_PLANNING_TOPIC,
             CURRENT_SUBTASK_TOPIC,
             SUBTASK_STATUS_TOPIC,

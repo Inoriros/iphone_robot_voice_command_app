@@ -6,12 +6,14 @@ It exposes:
 
 - `POST /command` for verified iPhone commands.
 - `POST /battery` for authenticated Spot battery checks.
+- `POST /manual_control` for authenticated body-relative phone motion goals.
 - `WebSocket /status` for live robot task status.
 - ROS 2 publisher: `/scenario` as `std_msgs/msg/String` for normal spoken tasks.
 - ROS 2 publisher: `/task_control` as `std_msgs/msg/String` for stop/pause/resume controls.
 - ROS 2 fallback publisher: `/current_subtask` for immediate foreground-skill preemption.
 - ROS 2 publisher: `/current_arm_subtask` for fixed arm actions.
-- ROS 2 status subscribers: `/current_subtask`, `/subtask_status`, `/task_planning`, `/subtask_prompt_evidance`, `/subtask_image_evidence`, `/sim_control`, plus optional `/task_status`.
+- ROS 2 publisher: `/human_way_point` as body-frame `geometry_msgs/msg/PoseStamped`.
+- ROS 2 status subscribers: `/spot/control_state`, `/current_subtask`, `/subtask_status`, `/task_planning`, `/subtask_prompt_evidance`, `/subtask_image_evidence`, `/sim_control`, plus optional `/task_status`.
 
 ## How It Connects To The Robot
 
@@ -28,6 +30,19 @@ The bridge decides what to do:
 - `STOP_CURRENT_TASK`, `STOP_CURRENT_SUBTASK`, `PAUSE_CURRENT_SUBTASK`, and `RESUME_CURRENT_SUBTASK` are published to `/task_control`.
 - `ARM_RELAX`, `ARM_BUTTON`, and `ARM_PRESS` publish fixed action JSON to `/current_arm_subtask`.
 - Stop/pause commands also publish a non-active `/current_subtask` marker so following, VLM guidance, and navigation skills can preempt quickly. They do not stop the persistent exploration module or clear its history.
+
+Phone rotation and panel taps send `x`, `y`, and `yaw` to `/manual_control`.
+The bridge converts them into a body-frame `PoseStamped` on `/human_way_point`.
+The Spot controller accepts that topic only when its physical source switch is
+in SBUS and robot mode is WALK. It publishes that availability as transient JSON
+on `/spot/control_state`, which the bridge forwards to the app status WebSocket.
+
+The panel uses `x` forward, `y` left, and relative yaw in radians. The default
+HTTP limit is ±2 m per axis and can be changed with:
+
+```bash
+export ROBOT_MANUAL_CONTROL_AXIS_LIMIT_METERS="2"
+```
 
 The battery button sends an authenticated request to:
 
@@ -126,6 +141,16 @@ curl -X POST http://JETSON_IP:8080/battery \
   -d '{"token":"2001","source":"manual-test"}'
 ```
 
+Test manual-control routing without requesting motion:
+
+```bash
+ros2 topic echo /human_way_point
+
+curl -X POST http://JETSON_IP:8080/manual_control \
+  -H "Content-Type: application/json" \
+  -d '{"x":0.0,"y":0.0,"yaw":0.0,"token":"2001","source":"manual-test"}'
+```
+
 On the Jetson, check the ROS topic:
 
 ```bash
@@ -187,7 +212,7 @@ export ROBOT_BRIDGE_ALLOW_NO_ROS=true
 python3 robot_bridge.py
 ```
 
-In this mode `/command` accepts commands but does not publish to ROS.
+In this mode `/command` and `/manual_control` accept requests but do not publish to ROS.
 
 ## Troubleshooting
 

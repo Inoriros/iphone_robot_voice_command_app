@@ -16,8 +16,9 @@ iPhone app
 Jetson bridge
   - FastAPI POST /command
   - FastAPI POST /battery
+  - FastAPI POST /manual_control
   - FastAPI WebSocket /status
-  - ROS 2 publishers: /scenario, /task_control, and /current_arm_subtask
+  - ROS 2 publishers: /scenario, /task_control, /current_arm_subtask, and /human_way_point
   - ROS 2 subscribers: task status, /task_planning, and reasoning evidence
 ```
 
@@ -138,6 +139,18 @@ Move to Button  sends ARM_BUTTON
 Press Button    sends ARM_PRESS
 ```
 
+Phone driving is enabled only after the app receives `SBUS + WALK` from
+`/spot/control_state` over the status WebSocket:
+
+- **Relative Rotation:** drag the circular dial and tap **Rotate**. The yaw is
+  relative to Spot's current heading.
+- **Body-Relative Waypoint:** tap the square panel. Its fixed center arrow is
+  Spot, up is forward, and left is Spot's left. Each axis spans ±2 m.
+
+The bridge publishes both controls as body-frame `PoseStamped` messages on
+`/human_way_point`. Moving any physical SBUS stick cancels the phone trajectory
+and immediately returns control to the radio.
+
 ## Network API
 
 The iPhone sends commands to:
@@ -200,6 +213,25 @@ ARM_BUTTON  -> {"action_name":"move_to_button","start_pos":[0.0,0.0,0.0],"target
 ARM_PRESS   -> {"action_name":"move_to_press","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ```
 
+Phone motion controls send:
+
+```text
+POST http://JETSON_IP:8080/manual_control
+```
+
+```json
+{
+  "x": 1.0,
+  "y": 0.5,
+  "yaw": 0.0,
+  "token": "2001",
+  "source": "iphone"
+}
+```
+
+Coordinates use Spot's body frame: `x` is forward, `y` is left, and `yaw` is
+relative to the current heading in radians.
+
 The battery button sends:
 
 ```text
@@ -255,6 +287,9 @@ std_msgs/msg/String
 
 /current_arm_subtask
 std_msgs/msg/String
+
+/human_way_point
+geometry_msgs/msg/PoseStamped
 ```
 
 Status and evidence topics consumed by the bridge include:
@@ -266,6 +301,7 @@ Status and evidence topics consumed by the bridge include:
 /subtask_prompt_evidance
 /sim_control
 /task_status
+/spot/control_state
 std_msgs/msg/String
 
 /subtask_image_evidence
@@ -300,6 +336,16 @@ curl -X POST http://JETSON_IP:8080/command \
 ros2 topic echo /current_arm_subtask
 ```
 
+Test manual-control routing without requesting motion:
+
+```bash
+ros2 topic echo /human_way_point
+
+curl -X POST http://JETSON_IP:8080/manual_control \
+  -H "Content-Type: application/json" \
+  -d '{"x":0.0,"y":0.0,"yaw":0.0,"token":"2001","source":"manual-test"}'
+```
+
 Watch the ROS 2 normal task topic:
 
 ```bash
@@ -323,7 +369,7 @@ export ROBOT_BRIDGE_ALLOW_NO_ROS=true
 python3 robot_bridge.py
 ```
 
-In this mode the bridge accepts `/command` requests and supports WebSocket status testing, but it does not publish to ROS 2.
+In this mode the bridge accepts `/command` and `/manual_control` requests and supports WebSocket status testing, but it does not publish to ROS 2.
 
 You can push fake status updates with:
 

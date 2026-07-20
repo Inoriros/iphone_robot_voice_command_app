@@ -6,8 +6,10 @@ enum AppConfig {
     static let defaultPort = 8080
     static let commandPath = "/command"
     static let batteryPath = "/battery"
+    static let manualControlPath = "/manual_control"
     static let statusPath = "/status"
     static let commandSource = "iphone"
+    static let manualControlAxisRangeMeters = 2.0
     static let stopCurrentTaskCommand = "STOP_CURRENT_TASK"
     static let stopCurrentSubtaskCommand = "STOP_CURRENT_SUBTASK"
     static let pauseCurrentSubtaskCommand = "PAUSE_CURRENT_SUBTASK"

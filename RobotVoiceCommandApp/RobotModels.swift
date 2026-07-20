@@ -31,6 +31,26 @@ struct BatteryResponse: Codable {
     let message: String
 }
 
+struct ManualControlRequest: Codable {
+    let x: Double
+    let y: Double
+    let yaw: Double
+    let token: String
+    let source: String
+}
+
+struct ManualControlResponse: Codable {
+    let ok: Bool
+    let publishedTopic: String?
+    let message: String
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case publishedTopic = "published_topic"
+        case message
+    }
+}
+
 enum JSONValue: Codable {
     case string(String)
     case number(Double)

@@ -15,6 +15,11 @@ final class RobotClient: ObservableObject {
     @Published var batteryPercentage: Double?
     @Published var batteryMessage: String?
     @Published var isCheckingBattery = false
+    @Published var controlSource = "unknown"
+    @Published var robotMode = "unknown"
+    @Published var phoneControlEnabled = false
+    @Published var manualControlMessage: String?
+    @Published var isSendingManualControl = false
 
     private var webSocketTask: URLSessionWebSocketTask?
     private let jsonDecoder = JSONDecoder()
@@ -167,6 +172,95 @@ final class RobotClient: ObservableObject {
         }.resume()
     }
 
+    func sendManualControl(
+        ip: String,
+        token: String,
+        x: Double,
+        y: Double,
+        yaw: Double
+    ) {
+        let trimmedIP = normalizedHost(from: ip)
+
+        lastError = nil
+        manualControlMessage = nil
+        isSendingManualControl = false
+
+        guard phoneControlEnabled else {
+            lastError = "Phone control requires the RC source switch in SBUS and robot mode in WALK."
+            return
+        }
+        guard !trimmedIP.isEmpty else {
+            lastError = "Jetson IP is required."
+            return
+        }
+        guard x.isFinite, y.isFinite, yaw.isFinite else {
+            lastError = "Manual control contains an invalid coordinate."
+            return
+        }
+        let axisLimit = AppConfig.manualControlAxisRangeMeters
+        guard abs(x) <= axisLimit, abs(y) <= axisLimit, abs(yaw) <= Double.pi else {
+            lastError = "Manual control is outside the configured range."
+            return
+        }
+        guard let url = manualControlURL(ip: trimmedIP) else {
+            lastError = "Jetson IP is invalid."
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 8
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            let body = ManualControlRequest(
+                x: x,
+                y: y,
+                yaw: yaw,
+                token: token,
+                source: AppConfig.commandSource
+            )
+            request.httpBody = try jsonEncoder.encode(body)
+        } catch {
+            lastError = "Could not encode manual control: \(error.localizedDescription)"
+            return
+        }
+
+        isSendingManualControl = true
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isSendingManualControl = false
+
+                if let error {
+                    self.lastError = "Cannot reach Jetson at \(trimmedIP):\(AppConfig.defaultPort). \(error.localizedDescription)"
+                    return
+                }
+
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    self.lastError = "Jetson returned an invalid manual-control response."
+                    return
+                }
+
+                switch httpResponse.statusCode {
+                case 200:
+                    guard let data,
+                          let response = try? self.jsonDecoder.decode(ManualControlResponse.self, from: data),
+                          response.ok else {
+                        self.lastError = "Jetson returned an unreadable manual-control response."
+                        return
+                    }
+                    self.manualControlMessage = response.message
+                case 401:
+                    self.lastError = "Invalid token. Please check the token on the Jetson bridge."
+                default:
+                    self.lastError = self.bridgeErrorDetail(from: data)
+                        ?? "Jetson returned HTTP \(httpResponse.statusCode) for manual control."
+                }
+            }
+        }.resume()
+    }
+
     func connectStatusWebSocket(ip: String) {
         let trimmedIP = normalizedHost(from: ip)
 
@@ -202,6 +296,9 @@ final class RobotClient: ObservableObject {
     private func disconnectStatusWebSocket(updateState: Bool) {
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         webSocketTask = nil
+        phoneControlEnabled = false
+        controlSource = "unknown"
+        robotMode = "unknown"
 
         if updateState {
             connectionState = "Disconnected"
@@ -222,6 +319,9 @@ final class RobotClient: ObservableObject {
                     self.receiveStatusMessage()
                 case .failure(let error):
                     self.connectionState = "Disconnected"
+                    self.phoneControlEnabled = false
+                    self.controlSource = "unknown"
+                    self.robotMode = "unknown"
                     self.lastError = "Status stream disconnected. Tap Reconnect. \(error.localizedDescription)"
                     self.webSocketTask = nil
                 }
@@ -277,6 +377,16 @@ final class RobotClient: ObservableObject {
                     latestEvidenceImageFormat = imagePayload["format"] as? String
                 }
                 return
+            case "control_state":
+                if let controlState = eventData as? [String: Any] {
+                    controlSource = controlState["source"] as? String ?? "unknown"
+                    robotMode = controlState["robot_mode"] as? String ?? "unknown"
+                    phoneControlEnabled = controlState["phone_control_enabled"] as? Bool
+                        ?? (controlSource == "sbus" && robotMode == "walk")
+                } else {
+                    phoneControlEnabled = false
+                }
+                return
             default:
                 if let nestedData = encodedJSON(eventData),
                    let status = try? jsonDecoder.decode(RobotStatus.self, from: nestedData) {
@@ -324,6 +434,10 @@ final class RobotClient: ObservableObject {
 
     private func batteryURL(ip: String) -> URL? {
         URL(string: "http://\(ip):\(AppConfig.defaultPort)\(AppConfig.batteryPath)")
+    }
+
+    private func manualControlURL(ip: String) -> URL? {
+        URL(string: "http://\(ip):\(AppConfig.defaultPort)\(AppConfig.manualControlPath)")
     }
 
     private func statusURL(ip: String) -> URL? {
