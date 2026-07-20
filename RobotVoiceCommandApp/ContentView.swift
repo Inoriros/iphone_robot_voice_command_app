@@ -11,6 +11,8 @@ struct ContentView: View {
     @State private var selectedWaypointLocation: CGPoint?
     @State private var selectedWaypointX = 0.0
     @State private var selectedWaypointY = 0.0
+    @AppStorage("manualControlAxisRangeMeters") private var waypointRangeMeters =
+        AppConfig.defaultManualControlAxisRangeMeters
 
     private var trimmedCommand: String {
         commandText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -39,12 +41,12 @@ struct ContentView: View {
                     connectionSection
                     batterySection
                     statusSection
+                    commandSection
                     taskPlanSection
                     subtaskProofSection
                     stopControlsSection
                     armControlsSection
                     phoneControlSection
-                    commandSection
                     feedbackSection
                 }
                 .padding()
@@ -522,6 +524,22 @@ struct ContentView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            Stepper(
+                value: $waypointRangeMeters,
+                in: AppConfig.minimumManualControlAxisRangeMeters...AppConfig.maximumManualControlAxisRangeMeters,
+                step: 1
+            ) {
+                HStack {
+                    Label("Waypoint Range", systemImage: "ruler")
+
+                    Spacer()
+
+                    Text("±\(waypointRangeMeters.formatted(.number.precision(.fractionLength(0)))) m")
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             GeometryReader { geometry in
                 let side = min(geometry.size.width, geometry.size.height)
 
@@ -570,7 +588,7 @@ struct ContentView: View {
             }
             .aspectRatio(1, contentMode: .fit)
 
-            Text("Range: ±\(AppConfig.manualControlAxisRangeMeters.formatted()) m per axis")
+            Text("Each axis spans the selected ±\(waypointRangeMeters.formatted(.number.precision(.fractionLength(0)))) m")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -699,7 +717,7 @@ struct ContentView: View {
         let clampedX = min(max(location.x, 0), side)
         let clampedY = min(max(location.y, 0), side)
         let half = side / 2
-        let range = AppConfig.manualControlAxisRangeMeters
+        let range = waypointRangeMeters
 
         selectedWaypointLocation = CGPoint(
             x: clampedX / side,

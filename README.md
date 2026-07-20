@@ -144,8 +144,8 @@ Phone driving is enabled only after the app receives `SBUS + WALK` from
 
 - **Relative Rotation:** drag the circular dial and tap **Rotate**. The yaw is
   relative to Spot's current heading.
-- **Body-Relative Waypoint:** tap the square panel. Its fixed center arrow is
-  Spot, up is forward, and left is Spot's left. Each axis spans ±2 m.
+- **Body-Relative Waypoint:** choose a range from 2–6 m, then tap the square
+  panel. Its fixed center arrow is Spot, up is forward, and left is Spot's left.
 
 The bridge publishes both controls as body-frame `PoseStamped` messages on
 `/human_way_point`. Moving any physical SBUS stick cancels the phone trajectory

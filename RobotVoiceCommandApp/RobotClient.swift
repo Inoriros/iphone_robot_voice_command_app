@@ -197,7 +197,7 @@ final class RobotClient: ObservableObject {
             lastError = "Manual control contains an invalid coordinate."
             return
         }
-        let axisLimit = AppConfig.manualControlAxisRangeMeters
+        let axisLimit = AppConfig.maximumManualControlAxisRangeMeters
         guard abs(x) <= axisLimit, abs(y) <= axisLimit, abs(yaw) <= Double.pi else {
             lastError = "Manual control is outside the configured range."
             return

@@ -37,11 +37,12 @@ The Spot controller accepts that topic only when its physical source switch is
 in SBUS and robot mode is WALK. It publishes that availability as transient JSON
 on `/spot/control_state`, which the bridge forwards to the app status WebSocket.
 
-The panel uses `x` forward, `y` left, and relative yaw in radians. The default
-HTTP limit is ±2 m per axis and can be changed with:
+The panel uses `x` forward, `y` left, and relative yaw in radians. The app lets
+the user select a range from 2–6 m. The default HTTP safety limit is ±6 m per
+axis and can be changed with:
 
 ```bash
-export ROBOT_MANUAL_CONTROL_AXIS_LIMIT_METERS="2"
+export ROBOT_MANUAL_CONTROL_AXIS_LIMIT_METERS="6"
 ```
 
 The battery button sends an authenticated request to:
