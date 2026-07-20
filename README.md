@@ -17,8 +17,10 @@ Jetson bridge
   - FastAPI POST /command
   - FastAPI POST /battery
   - FastAPI POST /manual_control
+  - FastAPI POST /robot_mode
+  - FastAPI POST /control_source
   - FastAPI WebSocket /status
-  - ROS 2 publishers: /scenario, /task_control, /current_arm_subtask, and /human_way_point
+  - ROS 2 publishers: /scenario, /task_control, /current_arm_subtask, /human_way_point, /spot/app_robot_mode, and /spot/app_control_source
   - ROS 2 subscribers: task status, /task_planning, and reasoning evidence
 ```
 
@@ -139,8 +141,18 @@ Move to Button  sends ARM_BUTTON
 Press Button    sends ARM_PRESS
 ```
 
-Phone driving is enabled only after the app receives `SBUS + WALK` from
-`/spot/control_state` over the status WebSocket:
+The app receives live mode authority from `/spot/control_state`:
+
+- While SBUS is available, its physical mode/source switches own the robot.
+- When SBUS is disabled, disconnected, timed out, or in failsafe, the app unlocks
+  both the **Navigation**/**Stop**/**Phone** source buttons and the
+  **SIT**/**STAND**/**WALK** mode buttons.
+- The user must explicitly select both a source and a mode after SBUS is lost.
+- **Navigation** + **WALK** enables autonomous `/way_point` goals.
+- **Phone** + **WALK** enables the rotation dial and body-relative waypoint panel.
+- **Stop** cancels base motion, clears active waypoints, and commands Spot to stand.
+- The first valid recovered SBUS packet stops any app trajectory and returns
+  both switches to the physical controller.
 
 - **Relative Rotation:** drag the circular dial and tap **Rotate**. The yaw is
   relative to Spot's current heading.
@@ -148,8 +160,8 @@ Phone driving is enabled only after the app receives `SBUS + WALK` from
   panel. Its fixed center arrow is Spot, up is forward, and left is Spot's left.
 
 The bridge publishes both controls as body-frame `PoseStamped` messages on
-`/human_way_point`. Moving any physical SBUS stick cancels the phone trajectory
-and immediately returns control to the radio.
+`/human_way_point`. While SBUS is connected in SBUS + WALK, moving any physical
+stick cancels the phone trajectory immediately.
 
 ## Network API
 
@@ -232,6 +244,41 @@ POST http://JETSON_IP:8080/manual_control
 Coordinates use Spot's body frame: `x` is forward, `y` is left, and `yaw` is
 relative to the current heading in radians.
 
+Fallback robot-mode controls send:
+
+```text
+POST http://JETSON_IP:8080/robot_mode
+```
+
+```json
+{
+  "mode": "walk",
+  "token": "2001",
+  "source": "iphone"
+}
+```
+
+Valid modes are `sit`, `stand`, and `walk`. The Spot controller ignores this
+topic while SBUS is available.
+
+Fallback control-source controls send:
+
+```text
+POST http://JETSON_IP:8080/control_source
+```
+
+```json
+{
+  "source_mode": "sbus",
+  "token": "2001",
+  "source": "iphone"
+}
+```
+
+Valid values mirror the physical three-position control-source switch:
+`waypoint` selects Navigation, `hold` selects Stop, and `sbus` selects Phone.
+The Spot controller ignores this topic while SBUS is available.
+
 The battery button sends:
 
 ```text
@@ -290,6 +337,12 @@ std_msgs/msg/String
 
 /human_way_point
 geometry_msgs/msg/PoseStamped
+
+/spot/app_robot_mode
+std_msgs/msg/String
+
+/spot/app_control_source
+std_msgs/msg/String
 ```
 
 Status and evidence topics consumed by the bridge include:
@@ -346,6 +399,26 @@ curl -X POST http://JETSON_IP:8080/manual_control \
   -d '{"x":0.0,"y":0.0,"yaw":0.0,"token":"2001","source":"manual-test"}'
 ```
 
+Test robot-mode routing only while SBUS is unavailable:
+
+```bash
+ros2 topic echo /spot/app_robot_mode
+
+curl -X POST http://JETSON_IP:8080/robot_mode \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"stand","token":"2001","source":"manual-test"}'
+```
+
+Test control-source routing only while SBUS is unavailable:
+
+```bash
+ros2 topic echo /spot/app_control_source
+
+curl -X POST http://JETSON_IP:8080/control_source \
+  -H "Content-Type: application/json" \
+  -d '{"source_mode":"hold","token":"2001","source":"manual-test"}'
+```
+
 Watch the ROS 2 normal task topic:
 
 ```bash
@@ -369,7 +442,7 @@ export ROBOT_BRIDGE_ALLOW_NO_ROS=true
 python3 robot_bridge.py
 ```
 
-In this mode the bridge accepts `/command` and `/manual_control` requests and supports WebSocket status testing, but it does not publish to ROS 2.
+In this mode the bridge accepts `/command`, `/manual_control`, `/robot_mode`, and `/control_source` requests and supports WebSocket status testing, but it does not publish to ROS 2.
 
 You can push fake status updates with:
 

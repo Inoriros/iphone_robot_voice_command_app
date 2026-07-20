@@ -16,10 +16,21 @@ final class RobotClient: ObservableObject {
     @Published var batteryMessage: String?
     @Published var isCheckingBattery = false
     @Published var controlSource = "unknown"
+    @Published var physicalControlSource = "unknown"
     @Published var robotMode = "unknown"
+    @Published var controlAuthority = "none"
+    @Published var sbusAvailable = false
+    @Published var appModeControlEnabled = false
+    @Published var appModeOverrideActive = false
+    @Published var appSourceControlEnabled = false
+    @Published var appSourceOverrideActive = false
     @Published var phoneControlEnabled = false
     @Published var manualControlMessage: String?
     @Published var isSendingManualControl = false
+    @Published var robotModeMessage: String?
+    @Published var isSendingRobotMode = false
+    @Published var controlSourceMessage: String?
+    @Published var isSendingControlSource = false
 
     private var webSocketTask: URLSessionWebSocketTask?
     private let jsonDecoder = JSONDecoder()
@@ -186,7 +197,7 @@ final class RobotClient: ObservableObject {
         isSendingManualControl = false
 
         guard phoneControlEnabled else {
-            lastError = "Phone control requires the RC source switch in SBUS and robot mode in WALK."
+            lastError = "Phone motion requires the Phone control source and WALK mode."
             return
         }
         guard !trimmedIP.isEmpty else {
@@ -261,6 +272,168 @@ final class RobotClient: ObservableObject {
         }.resume()
     }
 
+    func sendRobotMode(ip: String, token: String, mode: String) {
+        let trimmedIP = normalizedHost(from: ip)
+        let normalizedMode = mode.lowercased()
+
+        lastError = nil
+        robotModeMessage = nil
+        isSendingRobotMode = false
+
+        guard connectionState == "Connected" else {
+            lastError = "Connect the live status stream before changing robot mode."
+            return
+        }
+        guard appModeControlEnabled else {
+            lastError = "Robot mode remains owned by the connected SBUS controller."
+            return
+        }
+        guard ["sit", "stand", "walk"].contains(normalizedMode) else {
+            lastError = "Unsupported robot mode."
+            return
+        }
+        guard !trimmedIP.isEmpty else {
+            lastError = "Jetson IP is required."
+            return
+        }
+        guard let url = robotModeURL(ip: trimmedIP) else {
+            lastError = "Jetson IP is invalid."
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 8
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            let body = RobotModeRequest(
+                mode: normalizedMode,
+                token: token,
+                source: AppConfig.commandSource
+            )
+            request.httpBody = try jsonEncoder.encode(body)
+        } catch {
+            lastError = "Could not encode robot mode: \(error.localizedDescription)"
+            return
+        }
+
+        isSendingRobotMode = true
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isSendingRobotMode = false
+
+                if let error {
+                    self.lastError = "Cannot reach Jetson at \(trimmedIP):\(AppConfig.defaultPort). \(error.localizedDescription)"
+                    return
+                }
+
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    self.lastError = "Jetson returned an invalid robot-mode response."
+                    return
+                }
+
+                switch httpResponse.statusCode {
+                case 200:
+                    guard let data,
+                          let response = try? self.jsonDecoder.decode(RobotModeResponse.self, from: data),
+                          response.ok else {
+                        self.lastError = "Jetson returned an unreadable robot-mode response."
+                        return
+                    }
+                    self.robotModeMessage = response.message
+                case 401:
+                    self.lastError = "Invalid token. Please check the token on the Jetson bridge."
+                default:
+                    self.lastError = self.bridgeErrorDetail(from: data)
+                        ?? "Jetson returned HTTP \(httpResponse.statusCode) while changing robot mode."
+                }
+            }
+        }.resume()
+    }
+
+    func sendControlSource(ip: String, token: String, sourceMode: String) {
+        let trimmedIP = normalizedHost(from: ip)
+        let normalizedSource = sourceMode.lowercased()
+
+        lastError = nil
+        controlSourceMessage = nil
+        isSendingControlSource = false
+
+        guard connectionState == "Connected" else {
+            lastError = "Connect the live status stream before changing control source."
+            return
+        }
+        guard appSourceControlEnabled else {
+            lastError = "Control source remains owned by the connected SBUS controller."
+            return
+        }
+        guard ["waypoint", "hold", "sbus"].contains(normalizedSource) else {
+            lastError = "Unsupported control source."
+            return
+        }
+        guard !trimmedIP.isEmpty else {
+            lastError = "Jetson IP is required."
+            return
+        }
+        guard let url = controlSourceURL(ip: trimmedIP) else {
+            lastError = "Jetson IP is invalid."
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 8
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            let body = ControlSourceRequest(
+                sourceMode: normalizedSource,
+                token: token,
+                source: AppConfig.commandSource
+            )
+            request.httpBody = try jsonEncoder.encode(body)
+        } catch {
+            lastError = "Could not encode control source: \(error.localizedDescription)"
+            return
+        }
+
+        isSendingControlSource = true
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isSendingControlSource = false
+
+                if let error {
+                    self.lastError = "Cannot reach Jetson at \(trimmedIP):\(AppConfig.defaultPort). \(error.localizedDescription)"
+                    return
+                }
+
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    self.lastError = "Jetson returned an invalid control-source response."
+                    return
+                }
+
+                switch httpResponse.statusCode {
+                case 200:
+                    guard let data,
+                          let response = try? self.jsonDecoder.decode(ControlSourceResponse.self, from: data),
+                          response.ok else {
+                        self.lastError = "Jetson returned an unreadable control-source response."
+                        return
+                    }
+                    self.controlSourceMessage = response.message
+                case 401:
+                    self.lastError = "Invalid token. Please check the token on the Jetson bridge."
+                default:
+                    self.lastError = self.bridgeErrorDetail(from: data)
+                        ?? "Jetson returned HTTP \(httpResponse.statusCode) while changing control source."
+                }
+            }
+        }.resume()
+    }
+
     func connectStatusWebSocket(ip: String) {
         let trimmedIP = normalizedHost(from: ip)
 
@@ -298,7 +471,14 @@ final class RobotClient: ObservableObject {
         webSocketTask = nil
         phoneControlEnabled = false
         controlSource = "unknown"
+        physicalControlSource = "unknown"
         robotMode = "unknown"
+        controlAuthority = "none"
+        sbusAvailable = false
+        appModeControlEnabled = false
+        appModeOverrideActive = false
+        appSourceControlEnabled = false
+        appSourceOverrideActive = false
 
         if updateState {
             connectionState = "Disconnected"
@@ -321,7 +501,14 @@ final class RobotClient: ObservableObject {
                     self.connectionState = "Disconnected"
                     self.phoneControlEnabled = false
                     self.controlSource = "unknown"
+                    self.physicalControlSource = "unknown"
                     self.robotMode = "unknown"
+                    self.controlAuthority = "none"
+                    self.sbusAvailable = false
+                    self.appModeControlEnabled = false
+                    self.appModeOverrideActive = false
+                    self.appSourceControlEnabled = false
+                    self.appSourceOverrideActive = false
                     self.lastError = "Status stream disconnected. Tap Reconnect. \(error.localizedDescription)"
                     self.webSocketTask = nil
                 }
@@ -380,10 +567,26 @@ final class RobotClient: ObservableObject {
             case "control_state":
                 if let controlState = eventData as? [String: Any] {
                     controlSource = controlState["source"] as? String ?? "unknown"
+                    physicalControlSource = controlState["physical_source"] as? String
+                        ?? controlSource
                     robotMode = controlState["robot_mode"] as? String ?? "unknown"
+                    controlAuthority = controlState["control_authority"] as? String
+                        ?? controlSource
+                    sbusAvailable = controlState["sbus_available"] as? Bool ?? true
+                    appSourceControlEnabled = controlState["app_source_control_enabled"] as? Bool
+                        ?? false
+                    appSourceOverrideActive = controlState["app_source_override_active"] as? Bool
+                        ?? false
+                    appModeControlEnabled = controlState["app_mode_control_enabled"] as? Bool
+                        ?? false
+                    appModeOverrideActive = controlState["app_mode_override_active"] as? Bool
+                        ?? false
                     phoneControlEnabled = controlState["phone_control_enabled"] as? Bool
                         ?? (controlSource == "sbus" && robotMode == "walk")
                 } else {
+                    appSourceControlEnabled = false
+                    appSourceOverrideActive = false
+                    appModeControlEnabled = false
                     phoneControlEnabled = false
                 }
                 return
@@ -438,6 +641,14 @@ final class RobotClient: ObservableObject {
 
     private func manualControlURL(ip: String) -> URL? {
         URL(string: "http://\(ip):\(AppConfig.defaultPort)\(AppConfig.manualControlPath)")
+    }
+
+    private func robotModeURL(ip: String) -> URL? {
+        URL(string: "http://\(ip):\(AppConfig.defaultPort)\(AppConfig.robotModePath)")
+    }
+
+    private func controlSourceURL(ip: String) -> URL? {
+        URL(string: "http://\(ip):\(AppConfig.defaultPort)\(AppConfig.controlSourcePath)")
     }
 
     private func statusURL(ip: String) -> URL? {

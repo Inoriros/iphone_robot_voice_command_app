@@ -31,7 +31,24 @@ struct ContentView: View {
     }
 
     private var canUsePhoneControl: Bool {
-        canSendControlCommand && robot.phoneControlEnabled && !robot.isSendingManualControl
+        canSendControlCommand
+            && robot.connectionState == "Connected"
+            && robot.phoneControlEnabled
+            && !robot.isSendingManualControl
+    }
+
+    private var canSwitchControlSource: Bool {
+        canSendControlCommand
+            && robot.connectionState == "Connected"
+            && robot.appSourceControlEnabled
+            && !robot.isSendingControlSource
+    }
+
+    private var canSwitchRobotMode: Bool {
+        canSendControlCommand
+            && robot.connectionState == "Connected"
+            && robot.appModeControlEnabled
+            && !robot.isSendingRobotMode
     }
 
     var body: some View {
@@ -421,11 +438,19 @@ struct ContentView: View {
                     .foregroundStyle(phoneControlStatusColor)
             }
 
-            Text("The RC source switch must be in SBUS and robot mode must be WALK. Physical stick input overrides the phone immediately.")
+            Text("SBUS owns the control source and robot mode whenever it is available. If it disconnects, the app can temporarily select both; phone motion requires the Phone source and WALK mode.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 16) {
+                controlSourceController
+
+                Divider()
+
+                robotModeController
+
+                Divider()
+
                 rotationController
 
                 Divider()
@@ -437,11 +462,118 @@ struct ContentView: View {
                         .font(.footnote)
                         .foregroundStyle(.green)
                 }
+
+                if let message = robot.controlSourceMessage {
+                    Label(message, systemImage: "switch.2")
+                        .font(.footnote)
+                        .foregroundStyle(.green)
+                }
+
+                if let message = robot.robotModeMessage {
+                    Label(message, systemImage: "switch.2")
+                        .font(.footnote)
+                        .foregroundStyle(.green)
+                }
             }
             .padding()
             .background(Color(.secondarySystemGroupedBackground))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
+    }
+
+    private var controlSourceController: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Control Source")
+                    .font(.subheadline.weight(.semibold))
+
+                Spacer()
+
+                if robot.isSendingControlSource {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            HStack(spacing: 8) {
+                controlSourceButton("waypoint", label: "Navigation", icon: "map.fill")
+                controlSourceButton("hold", label: "Stop", icon: "stop.fill")
+                controlSourceButton("sbus", label: "Phone", icon: "iphone")
+            }
+
+            Text(controlSourceAvailabilityText)
+                .font(.caption)
+                .foregroundStyle(
+                    robot.appSourceControlEnabled ? Color.orange : Color.secondary
+                )
+        }
+    }
+
+    private func controlSourceButton(
+        _ sourceMode: String,
+        label: String,
+        icon: String
+    ) -> some View {
+        Button {
+            robot.sendControlSource(
+                ip: jetsonIP,
+                token: token,
+                sourceMode: sourceMode
+            )
+        } label: {
+            Label(label, systemImage: icon)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(robot.controlSource == sourceMode ? Color.accentColor : Color.secondary)
+        .disabled(!canSwitchControlSource)
+    }
+
+    private var robotModeController: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Robot Mode")
+                    .font(.subheadline.weight(.semibold))
+
+                Spacer()
+
+                if robot.isSendingRobotMode {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            HStack(spacing: 8) {
+                robotModeButton("sit", label: "Sit", icon: "arrow.down.to.line")
+                robotModeButton("stand", label: "Stand", icon: "figure.stand")
+                robotModeButton("walk", label: "Walk", icon: "figure.walk")
+            }
+
+            Text(robotModeAvailabilityText)
+                .font(.caption)
+                .foregroundStyle(
+                    robot.appModeControlEnabled ? Color.orange : Color.secondary
+                )
+        }
+    }
+
+    private func robotModeButton(
+        _ mode: String,
+        label: String,
+        icon: String
+    ) -> some View {
+        Button {
+            robot.sendRobotMode(ip: jetsonIP, token: token, mode: mode)
+        } label: {
+            Label(label, systemImage: icon)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(
+            (robot.sbusAvailable || robot.appModeOverrideActive) && robot.robotMode == mode
+                ? Color.accentColor : Color.secondary
+        )
+        .disabled(!canSwitchRobotMode)
     }
 
     private var rotationController: some View {
@@ -683,7 +815,11 @@ struct ContentView: View {
 
     private var phoneControlStatusText: String {
         if robot.phoneControlEnabled {
-            return "SBUS • WALK"
+            return "\(robot.controlAuthority.uppercased()) • WALK"
+        }
+        if robot.appSourceControlEnabled {
+            let modeText = robot.appModeOverrideActive ? robot.robotMode.uppercased() : "NO MODE"
+            return "APP • \(robot.controlSource.uppercased()) • \(modeText)"
         }
         if robot.controlSource == "unknown" {
             return "Waiting for status"
@@ -692,11 +828,43 @@ struct ContentView: View {
     }
 
     private var phoneControlStatusIcon: String {
-        robot.phoneControlEnabled ? "checkmark.circle.fill" : "lock.fill"
+        if robot.phoneControlEnabled {
+            return "checkmark.circle.fill"
+        }
+        return robot.appSourceControlEnabled ? "switch.2" : "lock.fill"
     }
 
     private var phoneControlStatusColor: Color {
-        robot.phoneControlEnabled ? .green : .secondary
+        if robot.phoneControlEnabled {
+            return .green
+        }
+        return robot.appSourceControlEnabled ? .orange : .secondary
+    }
+
+    private var controlSourceAvailabilityText: String {
+        if robot.connectionState != "Connected" {
+            return "Connect the live status stream to check source authority."
+        }
+        if robot.sbusAvailable {
+            return "SBUS is connected; the physical control-source switch has priority."
+        }
+        if robot.appSourceControlEnabled {
+            return "SBUS is unavailable. Select Navigation, Stop, or Phone from the app."
+        }
+        return "Waiting for control-source authority."
+    }
+
+    private var robotModeAvailabilityText: String {
+        if robot.connectionState != "Connected" {
+            return "Connect the live status stream to check mode authority."
+        }
+        if robot.sbusAvailable {
+            return "SBUS is connected; the physical mode switch has priority."
+        }
+        if robot.appModeControlEnabled {
+            return "SBUS is unavailable. Select SIT, STAND, or WALK from the app."
+        }
+        return "Waiting for robot mode authority."
     }
 
     private var manualHeadingDegrees: Int {

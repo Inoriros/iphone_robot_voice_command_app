@@ -11,7 +11,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Literal, Optional, Set
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
@@ -49,6 +49,8 @@ CONTROL_TOPIC = os.getenv("ROBOT_CONTROL_TOPIC", "/task_control")
 CURRENT_SUBTASK_TOPIC = os.getenv("ROBOT_CURRENT_SUBTASK_TOPIC", "/current_subtask")
 CURRENT_ARM_SUBTASK_TOPIC = os.getenv("ROBOT_CURRENT_ARM_SUBTASK_TOPIC", "/current_arm_subtask")
 HUMAN_WAYPOINT_TOPIC = os.getenv("ROBOT_HUMAN_WAYPOINT_TOPIC", "/human_way_point")
+APP_ROBOT_MODE_TOPIC = os.getenv("ROBOT_APP_MODE_TOPIC", "/spot/app_robot_mode")
+APP_CONTROL_SOURCE_TOPIC = os.getenv("ROBOT_APP_SOURCE_TOPIC", "/spot/app_control_source")
 CONTROL_STATE_TOPIC = os.getenv("ROBOT_CONTROL_STATE_TOPIC", "/spot/control_state")
 SUBTASK_STATUS_TOPIC = os.getenv("ROBOT_SUBTASK_STATUS_TOPIC", "/subtask_status")
 TASK_PLANNING_TOPIC = os.getenv("ROBOT_TASK_PLANNING_TOPIC", "/task_planning")
@@ -151,6 +153,32 @@ class ManualControlResponse(BaseModel):
     message: str
 
 
+class RobotModeRequest(BaseModel):
+    mode: Literal["sit", "stand", "walk"]
+    token: str
+    source: str = "iphone"
+
+
+class RobotModeResponse(BaseModel):
+    ok: bool
+    published_topic: Optional[str] = None
+    mode: str
+    message: str
+
+
+class ControlSourceRequest(BaseModel):
+    source_mode: Literal["waypoint", "hold", "sbus"]
+    token: str
+    source: str = "iphone"
+
+
+class ControlSourceResponse(BaseModel):
+    ok: bool
+    published_topic: Optional[str] = None
+    source_mode: str
+    message: str
+
+
 @dataclass
 class BridgeState:
     latest_status_text: Optional[str] = None
@@ -217,6 +245,8 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             transient_qos,
         )
         self._human_waypoint_pub = self.create_publisher(PoseStamped, HUMAN_WAYPOINT_TOPIC, 10)
+        self._app_robot_mode_pub = self.create_publisher(String, APP_ROBOT_MODE_TOPIC, 10)
+        self._app_control_source_pub = self.create_publisher(String, APP_CONTROL_SOURCE_TOPIC, 10)
 
         for topic in dict.fromkeys(
             [
@@ -257,6 +287,8 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             f"tasks -> {TASK_TOPIC}, controls -> {CONTROL_TOPIC}, "
             f"arm actions -> {CURRENT_ARM_SUBTASK_TOPIC}, "
             f"manual goals -> {HUMAN_WAYPOINT_TOPIC}, "
+            f"app mode -> {APP_ROBOT_MODE_TOPIC}, "
+            f"app source -> {APP_CONTROL_SOURCE_TOPIC}, "
             f"status <- {CURRENT_SUBTASK_TOPIC}, {SUBTASK_STATUS_TOPIC}, "
             f"{TASK_PLANNING_TOPIC}, {PROMPT_EVIDENCE_TOPIC}, "
             f"{IMAGE_EVIDENCE_TOPIC}, {SIM_CONTROL_TOPIC}"
@@ -333,6 +365,28 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             x,
             y,
             yaw,
+        )
+
+    def publish_app_robot_mode(self, mode: str, source: str) -> None:
+        message = String()
+        message.data = mode
+        self._app_robot_mode_pub.publish(message)
+        self.get_logger().warning(
+            "published iPhone robot mode to %s from %s: %s",
+            APP_ROBOT_MODE_TOPIC,
+            source,
+            mode.upper(),
+        )
+
+    def publish_app_control_source(self, source_mode: str, source: str) -> None:
+        message = String()
+        message.data = source_mode
+        self._app_control_source_pub.publish(message)
+        self.get_logger().warning(
+            "published iPhone control source to %s from %s: %s",
+            APP_CONTROL_SOURCE_TOPIC,
+            source,
+            source_mode.upper(),
         )
 
     @staticmethod
@@ -562,6 +616,8 @@ async def health() -> Dict[str, Any]:
         "current_subtask_topic": CURRENT_SUBTASK_TOPIC,
         "current_arm_subtask_topic": CURRENT_ARM_SUBTASK_TOPIC,
         "human_waypoint_topic": HUMAN_WAYPOINT_TOPIC,
+        "app_robot_mode_topic": APP_ROBOT_MODE_TOPIC,
+        "app_control_source_topic": APP_CONTROL_SOURCE_TOPIC,
         "control_state_topic": CONTROL_STATE_TOPIC,
         "manual_control_axis_limit_m": MANUAL_CONTROL_AXIS_LIMIT_METERS,
         "subtask_status_topic": SUBTASK_STATUS_TOPIC,
@@ -649,7 +705,70 @@ async def manual_control(request: ManualControlRequest) -> ManualControlResponse
     return ManualControlResponse(
         ok=True,
         published_topic=published_topic,
-        message="Manual goal published. Spot requires SBUS + WALK mode.",
+        message="Manual goal published. Spot requires WALK with phone control enabled.",
+    )
+
+
+@app.post("/robot_mode", response_model=RobotModeResponse)
+async def robot_mode(request: RobotModeRequest) -> RobotModeResponse:
+    if request.token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    published_topic: Optional[str] = None
+    if ros_node is None:
+        if not ALLOW_NO_ROS:
+            raise HTTPException(status_code=503, detail="ROS 2 bridge is not available")
+        logger.info(
+            "accepted robot mode in no-ROS test mode from %s: %s",
+            request.source,
+            request.mode.upper(),
+        )
+    else:
+        ros_node.publish_app_robot_mode(request.mode, request.source)
+        published_topic = APP_ROBOT_MODE_TOPIC
+
+    return RobotModeResponse(
+        ok=True,
+        published_topic=published_topic,
+        mode=request.mode,
+        message=(
+            f"Requested {request.mode.upper()}. "
+            "Spot accepts app mode changes only while SBUS is unavailable."
+        ),
+    )
+
+
+@app.post("/control_source", response_model=ControlSourceResponse)
+async def control_source(request: ControlSourceRequest) -> ControlSourceResponse:
+    if request.token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    published_topic: Optional[str] = None
+    if ros_node is None:
+        if not ALLOW_NO_ROS:
+            raise HTTPException(status_code=503, detail="ROS 2 bridge is not available")
+        logger.info(
+            "accepted control source in no-ROS test mode from %s: %s",
+            request.source,
+            request.source_mode.upper(),
+        )
+    else:
+        ros_node.publish_app_control_source(request.source_mode, request.source)
+        published_topic = APP_CONTROL_SOURCE_TOPIC
+
+    source_label = {
+        "waypoint": "NAVIGATION",
+        "hold": "STOP",
+        "sbus": "PHONE",
+    }[request.source_mode]
+    return ControlSourceResponse(
+        ok=True,
+        published_topic=published_topic,
+        source_mode=request.source_mode,
+        message=(
+            f"Requested {source_label} control source. "
+            "Spot accepts app source changes only while SBUS is unavailable."
+        ),
     )
 
 

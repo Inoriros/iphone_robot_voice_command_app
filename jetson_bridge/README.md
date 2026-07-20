@@ -7,12 +7,16 @@ It exposes:
 - `POST /command` for verified iPhone commands.
 - `POST /battery` for authenticated Spot battery checks.
 - `POST /manual_control` for authenticated body-relative phone motion goals.
+- `POST /robot_mode` for authenticated app fallback mode requests.
+- `POST /control_source` for authenticated app fallback source requests.
 - `WebSocket /status` for live robot task status.
 - ROS 2 publisher: `/scenario` as `std_msgs/msg/String` for normal spoken tasks.
 - ROS 2 publisher: `/task_control` as `std_msgs/msg/String` for stop/pause/resume controls.
 - ROS 2 fallback publisher: `/current_subtask` for immediate foreground-skill preemption.
 - ROS 2 publisher: `/current_arm_subtask` for fixed arm actions.
 - ROS 2 publisher: `/human_way_point` as body-frame `geometry_msgs/msg/PoseStamped`.
+- ROS 2 publisher: `/spot/app_robot_mode` as `std_msgs/msg/String`.
+- ROS 2 publisher: `/spot/app_control_source` as `std_msgs/msg/String`.
 - ROS 2 status subscribers: `/spot/control_state`, `/current_subtask`, `/subtask_status`, `/task_planning`, `/subtask_prompt_evidance`, `/subtask_image_evidence`, `/sim_control`, plus optional `/task_status`.
 
 ## How It Connects To The Robot
@@ -33,9 +37,18 @@ The bridge decides what to do:
 
 Phone rotation and panel taps send `x`, `y`, and `yaw` to `/manual_control`.
 The bridge converts them into a body-frame `PoseStamped` on `/human_way_point`.
-The Spot controller accepts that topic only when its physical source switch is
-in SBUS and robot mode is WALK. It publishes that availability as transient JSON
-on `/spot/control_state`, which the bridge forwards to the app status WebSocket.
+The Spot controller accepts that topic in WALK with either physical SBUS authority
+or the explicit app **Phone** source.
+
+When `/spot/control_state` reports SBUS unavailable, the app can POST `sit`,
+`stand`, or `walk` to `/robot_mode`. The bridge publishes the mode to
+`/spot/app_robot_mode`. It can also POST `waypoint`, `hold`, or `sbus` to
+`/control_source`, which publishes to `/spot/app_control_source`. Those values map
+to the app labels **Navigation**, **Stop**, and **Phone**. Navigation + WALK enables
+autonomous `/way_point` goals; Phone + WALK enables `/human_way_point`; Stop cancels
+base motion and commands Spot to stand. The Spot controller rejects both fallback
+topics while SBUS is healthy. The first valid recovered packet stops app motion
+and restores both physical switches.
 
 The panel uses `x` forward, `y` left, and relative yaw in radians. The app lets
 the user select a range from 2–6 m. The default HTTP safety limit is ±6 m per
@@ -152,6 +165,26 @@ curl -X POST http://JETSON_IP:8080/manual_control \
   -d '{"x":0.0,"y":0.0,"yaw":0.0,"token":"2001","source":"manual-test"}'
 ```
 
+Test robot-mode routing only while SBUS is unavailable:
+
+```bash
+ros2 topic echo /spot/app_robot_mode
+
+curl -X POST http://JETSON_IP:8080/robot_mode \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"stand","token":"2001","source":"manual-test"}'
+```
+
+
+Test control-source routing only while SBUS is unavailable:
+
+```bash
+ros2 topic echo /spot/app_control_source
+
+curl -X POST http://JETSON_IP:8080/control_source \
+  -H "Content-Type: application/json" \
+  -d '{"source_mode":"hold","token":"2001","source":"manual-test"}'
+```
 On the Jetson, check the ROS topic:
 
 ```bash
@@ -213,7 +246,7 @@ export ROBOT_BRIDGE_ALLOW_NO_ROS=true
 python3 robot_bridge.py
 ```
 
-In this mode `/command` and `/manual_control` accept requests but do not publish to ROS.
+In this mode `/command`, `/manual_control`, `/robot_mode`, and `/control_source` accept requests but do not publish to ROS.
 
 ## Troubleshooting
 

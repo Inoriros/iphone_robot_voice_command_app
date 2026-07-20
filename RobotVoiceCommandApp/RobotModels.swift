@@ -51,6 +51,52 @@ struct ManualControlResponse: Codable {
     }
 }
 
+struct RobotModeRequest: Codable {
+    let mode: String
+    let token: String
+    let source: String
+}
+
+struct RobotModeResponse: Codable {
+    let ok: Bool
+    let publishedTopic: String?
+    let mode: String
+    let message: String
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case publishedTopic = "published_topic"
+        case mode
+        case message
+    }
+}
+
+struct ControlSourceRequest: Codable {
+    let sourceMode: String
+    let token: String
+    let source: String
+
+    enum CodingKeys: String, CodingKey {
+        case sourceMode = "source_mode"
+        case token
+        case source
+    }
+}
+
+struct ControlSourceResponse: Codable {
+    let ok: Bool
+    let publishedTopic: String?
+    let sourceMode: String
+    let message: String
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case publishedTopic = "published_topic"
+        case sourceMode = "source_mode"
+        case message
+    }
+}
+
 enum JSONValue: Codable {
     case string(String)
     case number(Double)
