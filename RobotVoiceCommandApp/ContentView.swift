@@ -20,6 +20,13 @@ private enum HeldRobotMotion: Equatable {
     }
 }
 
+private struct DriveJoystickCommand: Equatable {
+    let forward: Double
+    let yaw: Double
+
+    static let zero = DriveJoystickCommand(forward: 0, yaw: 0)
+}
+
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var speech = SpeechRecognizer()
@@ -31,6 +38,10 @@ struct ContentView: View {
     @State private var selectedWaypointYawRadians = 0.0
     @State private var heldRobotMotion: HeldRobotMotion?
     @State private var heldMotionTask: Task<Void, Never>?
+    @State private var driveJoystickOffset = CGSize.zero
+    @State private var driveJoystickCommand = DriveJoystickCommand.zero
+    @State private var driveJoystickActive = false
+    @State private var driveJoystickRefreshTask: Task<Void, Never>?
     @State private var selectedWaypointLocation: CGPoint?
     @State private var selectedWaypointX = 0.0
     @State private var selectedWaypointY = 0.0
@@ -71,6 +82,13 @@ struct ContentView: View {
         canUsePhoneControl
             && heldRobotMotion == nil
             && !robot.isSendingBodyHeight
+            && !driveJoystickActive
+    }
+
+    private var canUseWaypointControl: Bool {
+        canUsePhoneControl
+            && heldRobotMotion == nil
+            && !driveJoystickActive
     }
 
     private var canSwitchControlSource: Bool {
@@ -116,7 +134,7 @@ struct ContentView: View {
             }
             .onChange(of: robot.phoneControlEnabled) { _, enabled in
                 if !enabled {
-                    stopHeldMotion()
+                    stopAllDirectMotion()
                 }
             }
             .onChange(of: robot.bodyHeightMeters) { _, height in
@@ -126,11 +144,11 @@ struct ContentView: View {
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active {
-                    stopHeldMotion()
+                    stopAllDirectMotion()
                 }
             }
             .onDisappear {
-                stopHeldMotion()
+                stopAllDirectMotion()
             }
         }
     }
@@ -508,11 +526,16 @@ struct ContentView: View {
                 standingHeightController
 
                 Divider()
+
                 rotationController
 
                 Divider()
 
                 directMovementController
+
+                Divider()
+
+                driveJoystickController
 
                 Divider()
 
@@ -772,9 +795,107 @@ struct ContentView: View {
         .accessibilityHint("Press and hold to move; release to stop")
     }
 
+    private var driveJoystickController: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("4. Drive Joystick")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Drag up or down for throttle and left or right for steering. Diagonal drag moves and turns at the same time; releasing stops Spot.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            GeometryReader { geometry in
+                let side = min(geometry.size.width, 240.0)
+                let maximumTravel = max((side - 66.0) / 2.0, 1.0)
+
+                ZStack {
+                    Circle()
+                        .fill(Color(.tertiarySystemGroupedBackground))
+
+                    Circle()
+                        .strokeBorder(Color.secondary.opacity(0.55), lineWidth: 2)
+
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.22))
+                        .frame(width: 1)
+
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.22))
+                        .frame(height: 1)
+
+                    Image(systemName: "arrow.up")
+                        .foregroundStyle(.secondary)
+                        .position(x: side / 2, y: 18)
+
+                    Image(systemName: "arrow.down")
+                        .foregroundStyle(.secondary)
+                        .position(x: side / 2, y: side - 18)
+
+                    Image(systemName: "arrow.left")
+                        .foregroundStyle(.secondary)
+                        .position(x: 18, y: side / 2)
+
+                    Image(systemName: "arrow.right")
+                        .foregroundStyle(.secondary)
+                        .position(x: side - 18, y: side / 2)
+
+                    Circle()
+                        .fill(driveJoystickActive ? Color.orange : Color.accentColor)
+                        .frame(width: 66, height: 66)
+                        .overlay(
+                            Image(systemName: "steeringwheel")
+                                .font(.title2.weight(.semibold))
+                                .foregroundStyle(.white)
+                        )
+                        .shadow(color: .black.opacity(0.22), radius: 5, y: 3)
+                        .offset(driveJoystickOffset)
+                }
+                .frame(width: side, height: side)
+                .contentShape(Circle())
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            updateDriveJoystick(
+                                at: value.location,
+                                side: side,
+                                maximumTravel: maximumTravel
+                            )
+                        }
+                        .onEnded { _ in
+                            stopDriveJoystick()
+                        }
+                )
+                .opacity(canUseDirectControl ? 1 : 0.45)
+                .allowsHitTesting(canUseDirectControl)
+                .position(x: geometry.size.width / 2, y: side / 2)
+            }
+            .frame(height: 240)
+
+            HStack {
+                Label(
+                    "Throttle \(Int((driveJoystickCommand.forward * 100).rounded()))%",
+                    systemImage: "arrow.up.and.down"
+                )
+
+                Spacer()
+
+                Label(
+                    "Turn \(Int((driveJoystickCommand.yaw * 100).rounded()))%",
+                    systemImage: "arrow.left.and.right"
+                )
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+
+            Text("This car-style joystick sends forward and yaw together; lateral strafe remains on the Left/Right buttons above.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     private var waypointController: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("4. Body-Relative Waypoint")
+            Text("5. Body-Relative Waypoint")
                 .font(.subheadline.weight(.semibold))
 
             Text("Tap the square. Spot will face along the line from the center to the target.")
@@ -1008,6 +1129,9 @@ struct ContentView: View {
 
     private func beginHeldMotion(_ motion: HeldRobotMotion) {
         guard canUseDirectControl, heldRobotMotion != motion else { return }
+        if driveJoystickActive || driveJoystickRefreshTask != nil {
+            stopDriveJoystick()
+        }
         heldMotionTask?.cancel()
         heldRobotMotion = motion
         sendHeldMotion(motion)
@@ -1034,13 +1158,7 @@ struct ContentView: View {
         heldMotionTask?.cancel()
         heldMotionTask = nil
         heldRobotMotion = nil
-        robot.sendManualVelocity(
-            ip: jetsonIP,
-            token: token,
-            forward: 0,
-            strafe: 0,
-            yaw: 0
-        )
+        sendStopVelocity()
     }
 
     private func sendHeldMotion(_ motion: HeldRobotMotion) {
@@ -1054,6 +1172,113 @@ struct ContentView: View {
         )
     }
 
+    private func updateDriveJoystick(
+        at location: CGPoint,
+        side: CGFloat,
+        maximumTravel: CGFloat
+    ) {
+        guard canUseDirectControl, side > 0, maximumTravel > 0 else {
+            stopDriveJoystick()
+            return
+        }
+
+        if heldRobotMotion != nil || heldMotionTask != nil {
+            stopHeldMotion()
+        }
+
+        let center = side / 2
+        var offsetX = location.x - center
+        var offsetY = location.y - center
+        let distance = (offsetX * offsetX + offsetY * offsetY).squareRoot()
+        if distance > maximumTravel {
+            let scale = maximumTravel / distance
+            offsetX *= scale
+            offsetY *= scale
+        }
+
+        driveJoystickOffset = CGSize(width: offsetX, height: offsetY)
+        driveJoystickCommand = DriveJoystickCommand(
+            forward: driveAxisValue(-Double(offsetY / maximumTravel)),
+            yaw: driveAxisValue(-Double(offsetX / maximumTravel))
+        )
+        driveJoystickActive = true
+        sendDriveJoystickCommand()
+        startDriveJoystickRefresh()
+    }
+
+    private func driveAxisValue(_ rawValue: Double) -> Double {
+        let clampedValue = min(max(rawValue, -1), 1)
+        let deadzone = 0.08
+        guard abs(clampedValue) > deadzone else { return 0 }
+        let magnitude = (abs(clampedValue) - deadzone) / (1 - deadzone)
+        return clampedValue < 0 ? -magnitude : magnitude
+    }
+
+    private func startDriveJoystickRefresh() {
+        guard driveJoystickRefreshTask == nil else { return }
+        driveJoystickRefreshTask = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                guard !Task.isCancelled,
+                      driveJoystickActive,
+                      canUseDirectControl else {
+                    return
+                }
+                sendDriveJoystickCommand()
+            }
+        }
+    }
+
+    private func sendDriveJoystickCommand() {
+        robot.sendManualVelocity(
+            ip: jetsonIP,
+            token: token,
+            forward: driveJoystickCommand.forward,
+            strafe: 0,
+            yaw: driveJoystickCommand.yaw
+        )
+    }
+
+    private func stopDriveJoystick() {
+        guard driveJoystickActive || driveJoystickRefreshTask != nil else { return }
+        driveJoystickRefreshTask?.cancel()
+        driveJoystickRefreshTask = nil
+        driveJoystickActive = false
+        driveJoystickOffset = .zero
+        driveJoystickCommand = .zero
+        sendStopVelocity()
+    }
+
+    private func stopAllDirectMotion() {
+        let shouldSendStop = heldRobotMotion != nil
+            || heldMotionTask != nil
+            || driveJoystickActive
+            || driveJoystickRefreshTask != nil
+
+        heldMotionTask?.cancel()
+        heldMotionTask = nil
+        heldRobotMotion = nil
+        driveJoystickRefreshTask?.cancel()
+        driveJoystickRefreshTask = nil
+        driveJoystickActive = false
+        driveJoystickOffset = .zero
+        driveJoystickCommand = .zero
+
+        if shouldSendStop {
+            sendStopVelocity()
+        }
+    }
+
+    private func sendStopVelocity() {
+        robot.sendManualVelocity(
+            ip: jetsonIP,
+            token: token,
+            forward: 0,
+            strafe: 0,
+            yaw: 0
+        )
+    }
+
     private func sendSelectedBodyHeight() {
         robot.sendBodyHeight(
             ip: jetsonIP,
@@ -1063,7 +1288,7 @@ struct ContentView: View {
     }
 
     private func sendWaypointTap(at location: CGPoint, side: CGFloat) {
-        guard side > 0, canUsePhoneControl else { return }
+        guard side > 0, canUseWaypointControl else { return }
 
         let clampedX = min(max(location.x, 0), side)
         let clampedY = min(max(location.y, 0), side)
