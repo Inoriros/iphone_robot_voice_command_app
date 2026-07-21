@@ -8,6 +8,7 @@ It exposes:
 - `POST /battery` for authenticated Spot battery checks.
 - `POST /manual_control` for authenticated body-relative phone motion goals.
 - `POST /manual_velocity` for authenticated press-and-hold velocity refreshes.
+- `POST /body_height` for authenticated standing-height offsets.
 - `POST /robot_mode` for authenticated app fallback mode requests.
 - `POST /control_source` for authenticated app fallback source requests.
 - `WebSocket /status` for live robot task status.
@@ -17,6 +18,7 @@ It exposes:
 - ROS 2 publisher: `/current_arm_subtask` for fixed arm actions.
 - ROS 2 publisher: `/human_way_point` as body-frame `geometry_msgs/msg/PoseStamped`.
 - ROS 2 publisher: `/human_velocity_command` as normalized `geometry_msgs/msg/Twist`.
+- ROS 2 publisher: `/human_body_height` as `std_msgs/msg/Float32`.
 - ROS 2 publisher: `/spot/app_robot_mode` as `std_msgs/msg/String`.
 - ROS 2 publisher: `/spot/app_control_source` as `std_msgs/msg/String`.
 - ROS 2 status subscribers: `/spot/control_state`, `/current_subtask`, `/subtask_status`, `/task_planning`, `/subtask_prompt_evidance`, `/subtask_image_evidence`, `/sim_control`, plus optional `/task_status`.
@@ -48,6 +50,13 @@ and `yaw` values to `/manual_velocity`. The bridge publishes a `Twist` on
 zero on release, and the Spot controller stops after 0.35 seconds without a refresh.
 Physical SBUS stick motion takes priority.
 
+The standing-height slider POSTs a body-height offset to `/body_height`. The
+bridge publishes `std_msgs/msg/Float32` on `/human_body_height`. The Spot
+controller accepts -0.20 m through +0.20 m only with Phone + WALK authority,
+rejects the request while a physical stick is active, cancels active phone
+motion, and applies the offset through Spot's mobility parameters. **Nominal**
+sends `0.0`.
+
 The Spot controller accepts both phone motion topics in WALK with physical SBUS
 authority or the explicit app **Phone** source. When `/spot/control_state` reports
 SBUS unavailable, the app can POST `sit`, `stand`, or `walk` to `/robot_mode`.
@@ -64,6 +73,14 @@ axis and can be changed with:
 
 ```bash
 export ROBOT_MANUAL_CONTROL_AXIS_LIMIT_METERS="6"
+```
+
+Body-height HTTP and controller limits default to ±0.20 m. Keep the bridge and
+controller launch limits aligned if they are customized:
+
+```bash
+export ROBOT_BODY_HEIGHT_MIN_METERS="-0.20"
+export ROBOT_BODY_HEIGHT_MAX_METERS="0.20"
 ```
 
 The battery button sends an authenticated request to:
@@ -173,6 +190,17 @@ curl -X POST http://JETSON_IP:8080/manual_control \
   -d '{"x":0.0,"y":0.0,"yaw":0.0,"token":"2001","source":"manual-test"}'
 ```
 
+Test body-height routing only with Phone + WALK authority and no active physical
+stick input:
+
+```bash
+ros2 topic echo /human_body_height
+
+curl -X POST http://JETSON_IP:8080/body_height \
+  -H "Content-Type: application/json" \
+  -d '{"height":0.0,"token":"2001","source":"manual-test"}'
+```
+
 Test robot-mode routing only while SBUS is unavailable:
 
 ```bash
@@ -254,7 +282,7 @@ export ROBOT_BRIDGE_ALLOW_NO_ROS=true
 python3 robot_bridge.py
 ```
 
-In this mode `/command`, `/manual_control`, `/manual_velocity`, `/robot_mode`, and `/control_source` accept requests but do not publish to ROS.
+In this mode `/command`, `/manual_control`, `/manual_velocity`, `/body_height`, `/robot_mode`, and `/control_source` accept requests but do not publish to ROS.
 
 ## Troubleshooting
 

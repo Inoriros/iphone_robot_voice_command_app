@@ -8,6 +8,7 @@ enum AppConfig {
     static let batteryPath = "/battery"
     static let manualControlPath = "/manual_control"
     static let manualVelocityPath = "/manual_velocity"
+    static let bodyHeightPath = "/body_height"
     static let robotModePath = "/robot_mode"
     static let controlSourcePath = "/control_source"
     static let statusPath = "/status"
@@ -15,6 +16,8 @@ enum AppConfig {
     static let defaultManualControlAxisRangeMeters = 2.0
     static let minimumManualControlAxisRangeMeters = 2.0
     static let maximumManualControlAxisRangeMeters = 6.0
+    static let minimumBodyHeightMeters = -0.20
+    static let maximumBodyHeightMeters = 0.20
     static let stopCurrentTaskCommand = "STOP_CURRENT_TASK"
     static let stopCurrentSubtaskCommand = "STOP_CURRENT_SUBTASK"
     static let pauseCurrentSubtaskCommand = "PAUSE_CURRENT_SUBTASK"

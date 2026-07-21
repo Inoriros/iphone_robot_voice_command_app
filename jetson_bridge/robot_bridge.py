@@ -22,7 +22,7 @@ try:
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from geometry_msgs.msg import PoseStamped, Twist
     from sensor_msgs.msg import CompressedImage
-    from std_msgs.msg import String
+    from std_msgs.msg import Float32, String
 
     ROS_AVAILABLE = True
 except ImportError:
@@ -34,6 +34,7 @@ except ImportError:
     PoseStamped = None
     Twist = None
     CompressedImage = None
+    Float32 = None
     String = None
     ROS_AVAILABLE = False
 
@@ -53,6 +54,10 @@ HUMAN_WAYPOINT_TOPIC = os.getenv("ROBOT_HUMAN_WAYPOINT_TOPIC", "/human_way_point
 HUMAN_VELOCITY_TOPIC = os.getenv(
     "ROBOT_HUMAN_VELOCITY_TOPIC",
     "/human_velocity_command",
+)
+HUMAN_BODY_HEIGHT_TOPIC = os.getenv(
+    "ROBOT_HUMAN_BODY_HEIGHT_TOPIC",
+    "/human_body_height",
 )
 APP_ROBOT_MODE_TOPIC = os.getenv("ROBOT_APP_MODE_TOPIC", "/spot/app_robot_mode")
 APP_CONTROL_SOURCE_TOPIC = os.getenv("ROBOT_APP_SOURCE_TOPIC", "/spot/app_control_source")
@@ -79,6 +84,12 @@ BATTERY_CHECK_TIMEOUT_SECONDS = float(
 )
 MANUAL_CONTROL_AXIS_LIMIT_METERS = float(
     os.getenv("ROBOT_MANUAL_CONTROL_AXIS_LIMIT_METERS", "6")
+)
+BODY_HEIGHT_MIN_METERS = float(
+    os.getenv("ROBOT_BODY_HEIGHT_MIN_METERS", "-0.20")
+)
+BODY_HEIGHT_MAX_METERS = float(
+    os.getenv("ROBOT_BODY_HEIGHT_MAX_METERS", "0.20")
 )
 ALLOW_NO_ROS = os.getenv("ROBOT_BRIDGE_ALLOW_NO_ROS", "false").lower() in {
     "1",
@@ -169,6 +180,23 @@ class ManualVelocityRequest(BaseModel):
 class ManualVelocityResponse(BaseModel):
     ok: bool
     published_topic: Optional[str] = None
+    message: str
+
+
+class BodyHeightRequest(BaseModel):
+    height: float = Field(
+        ...,
+        ge=BODY_HEIGHT_MIN_METERS,
+        le=BODY_HEIGHT_MAX_METERS,
+    )
+    token: str
+    source: str = "iphone"
+
+
+class BodyHeightResponse(BaseModel):
+    ok: bool
+    published_topic: Optional[str] = None
+    height: float
     message: str
 
 
@@ -268,6 +296,7 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
         self._app_control_source_pub = self.create_publisher(String, APP_CONTROL_SOURCE_TOPIC, 10)
         self._human_velocity_pub = self.create_publisher(Twist, HUMAN_VELOCITY_TOPIC, 10)
 
+        self._human_body_height_pub = self.create_publisher(Float32, HUMAN_BODY_HEIGHT_TOPIC, 10)
         for topic in dict.fromkeys(
             [
                 SUBTASK_STATUS_TOPIC,
@@ -310,6 +339,7 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             f"app mode -> {APP_ROBOT_MODE_TOPIC}, "
             f"app source -> {APP_CONTROL_SOURCE_TOPIC}, "
             f"manual velocity -> {HUMAN_VELOCITY_TOPIC}, "
+            f"body height -> {HUMAN_BODY_HEIGHT_TOPIC}, "
             f"status <- {CURRENT_SUBTASK_TOPIC}, {SUBTASK_STATUS_TOPIC}, "
             f"{TASK_PLANNING_TOPIC}, {PROMPT_EVIDENCE_TOPIC}, "
             f"{IMAGE_EVIDENCE_TOPIC}, {SIM_CONTROL_TOPIC}"
@@ -407,6 +437,15 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             f"published iPhone deadman velocity to {HUMAN_VELOCITY_TOPIC} "
             f"from {source}: forward={forward:.2f}, "
             f"strafe={strafe:.2f}, yaw={yaw:.2f}"
+        )
+
+    def publish_human_body_height(self, height: float, source: str) -> None:
+        message = Float32()
+        message.data = height
+        self._human_body_height_pub.publish(message)
+        self.get_logger().warning(
+            f"published iPhone body height to {HUMAN_BODY_HEIGHT_TOPIC} "
+            f"from {source}: offset={height:+.2f}m"
         )
 
     def publish_app_control_source(self, source_mode: str, source: str) -> None:
@@ -652,6 +691,9 @@ async def health() -> Dict[str, Any]:
         "manual_control_axis_limit_m": MANUAL_CONTROL_AXIS_LIMIT_METERS,
         "subtask_status_topic": SUBTASK_STATUS_TOPIC,
         "task_planning_topic": TASK_PLANNING_TOPIC,
+        "human_body_height_topic": HUMAN_BODY_HEIGHT_TOPIC,
+        "body_height_min_m": BODY_HEIGHT_MIN_METERS,
+        "body_height_max_m": BODY_HEIGHT_MAX_METERS,
         "prompt_evidence_topic": PROMPT_EVIDENCE_TOPIC,
         "image_evidence_topic": IMAGE_EVIDENCE_TOPIC,
         "sim_control_topic": SIM_CONTROL_TOPIC,
@@ -778,6 +820,35 @@ async def manual_velocity(request: ManualVelocityRequest) -> ManualVelocityRespo
             else "Deadman velocity refreshed; release the button to stop."
         ),
     )
+
+
+@app.post("/body_height", response_model=BodyHeightResponse)
+async def body_height(request: BodyHeightRequest) -> BodyHeightResponse:
+    if request.token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    published_topic: Optional[str] = None
+    if ros_node is None:
+        if not ALLOW_NO_ROS:
+            raise HTTPException(status_code=503, detail="ROS 2 bridge is not available")
+        logger.info(
+            "accepted body height in no-ROS test mode: offset=%+.2fm",
+            request.height,
+        )
+    else:
+        ros_node.publish_human_body_height(request.height, request.source)
+        published_topic = HUMAN_BODY_HEIGHT_TOPIC
+
+    return BodyHeightResponse(
+        ok=True,
+        published_topic=published_topic,
+        height=request.height,
+        message=(
+            f"Requested standing height offset {request.height:+.2f} m. "
+            "Spot requires Phone control plus WALK."
+        ),
+    )
+
 
 @app.post("/robot_mode", response_model=RobotModeResponse)
 async def robot_mode(request: RobotModeRequest) -> RobotModeResponse:

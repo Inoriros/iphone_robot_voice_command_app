@@ -18,10 +18,12 @@ Jetson bridge
   - FastAPI POST /battery
   - FastAPI POST /manual_control
   - FastAPI POST /manual_velocity
+  - FastAPI POST /body_height
   - FastAPI POST /robot_mode
   - FastAPI POST /control_source
   - FastAPI WebSocket /status
-  - ROS 2 publishers: /scenario, /task_control, /current_arm_subtask, /human_way_point, /human_velocity_command, /spot/app_robot_mode, and /spot/app_control_source
+  - ROS 2 publishers: /scenario, /task_control, /current_arm_subtask, /human_way_point,
+    /human_velocity_command, /human_body_height, /spot/app_robot_mode, and /spot/app_control_source
   - ROS 2 subscribers: task status, /task_planning, and reasoning evidence
 ```
 
@@ -150,12 +152,14 @@ The app receives live mode authority from `/spot/control_state`:
   **SIT**/**STAND**/**WALK** mode buttons.
 - The user must explicitly select both a source and a mode after SBUS is lost.
 - **Navigation** + **WALK** enables autonomous `/way_point` goals.
-- **Phone** + **WALK** enables direct rotation, direct movement, and the
-  body-relative waypoint panel.
+- **Phone** + **WALK** enables standing height, direct rotation, direct movement,
+  and the body-relative waypoint panel.
 - **Stop** cancels base motion, clears active waypoints, and commands Spot to stand.
 - The first valid recovered SBUS packet stops any app trajectory and returns
   both switches to the physical controller.
 
+- **Standing Height:** select an offset from -20 cm to +20 cm and tap **Apply
+  Height**; **Nominal** resets the offset to zero.
 - **Direct Rotation:** press and hold **Left** or **Right**; release to stop.
 - **Direct Movement:** press and hold an arrow; release to stop.
 - **Body-Relative Waypoint:** choose a range from 2–6 m, then tap the square
@@ -270,6 +274,25 @@ Values are in `[-1, 1]`. The app sends a zero command on release. The controller
 limits actual speed and stops if refreshes time out.
 
 
+Standing-height controls send a body-height offset relative to Spot's nominal stand:
+
+```text
+POST http://JETSON_IP:8080/body_height
+```
+
+```json
+{
+  "height": 0.10,
+  "token": "2001",
+  "source": "iphone"
+}
+```
+
+The accepted range is -0.20 m to +0.20 m. The controller requires **Phone** +
+**WALK**, rejects the request while a physical SBUS stick is active, stops any
+active phone trajectory, and then sends the new stand posture. **Nominal** sends
+`0.0`.
+
 Fallback robot-mode controls send:
 
 ```text
@@ -366,6 +389,9 @@ geometry_msgs/msg/PoseStamped
 
 /human_velocity_command
 geometry_msgs/msg/Twist
+
+/human_body_height
+std_msgs/msg/Float32
 
 /spot/app_robot_mode
 std_msgs/msg/String
@@ -471,7 +497,7 @@ export ROBOT_BRIDGE_ALLOW_NO_ROS=true
 python3 robot_bridge.py
 ```
 
-In this mode the bridge accepts `/command`, `/manual_control`, `/manual_velocity`, `/robot_mode`, and `/control_source` requests and supports WebSocket status testing, but it does not publish to ROS 2.
+In this mode the bridge accepts `/command`, `/manual_control`, `/manual_velocity`, `/body_height`, `/robot_mode`, and `/control_source` requests and supports WebSocket status testing, but it does not publish to ROS 2.
 
 You can push fake status updates with:
 

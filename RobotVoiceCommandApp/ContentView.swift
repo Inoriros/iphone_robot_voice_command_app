@@ -34,6 +34,7 @@ struct ContentView: View {
     @State private var selectedWaypointLocation: CGPoint?
     @State private var selectedWaypointX = 0.0
     @State private var selectedWaypointY = 0.0
+    @State private var selectedBodyHeightMeters = 0.0
     @AppStorage("manualControlAxisRangeMeters") private var waypointRangeMeters =
         AppConfig.defaultManualControlAxisRangeMeters
 
@@ -64,6 +65,12 @@ struct ContentView: View {
         canSendControlCommand
             && robot.connectionState == "Connected"
             && robot.phoneControlEnabled
+    }
+
+    private var canSetBodyHeight: Bool {
+        canUsePhoneControl
+            && heldRobotMotion == nil
+            && !robot.isSendingBodyHeight
     }
 
     private var canSwitchControlSource: Bool {
@@ -110,6 +117,11 @@ struct ContentView: View {
             .onChange(of: robot.phoneControlEnabled) { _, enabled in
                 if !enabled {
                     stopHeldMotion()
+                }
+            }
+            .onChange(of: robot.bodyHeightMeters) { _, height in
+                if !robot.isSendingBodyHeight {
+                    selectedBodyHeightMeters = height
                 }
             }
             .onChange(of: scenePhase) { _, phase in
@@ -493,6 +505,9 @@ struct ContentView: View {
 
                 Divider()
 
+                standingHeightController
+
+                Divider()
                 rotationController
 
                 Divider()
@@ -505,6 +520,12 @@ struct ContentView: View {
 
                 if let message = robot.manualControlMessage {
                     Label(message, systemImage: "checkmark.circle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.green)
+                }
+
+                if let message = robot.bodyHeightMessage {
+                    Label(message, systemImage: "arrow.up.and.down.circle.fill")
                         .font(.footnote)
                         .foregroundStyle(.green)
                 }
@@ -622,9 +643,68 @@ struct ContentView: View {
         .disabled(!canSwitchRobotMode)
     }
 
+    private var standingHeightController: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("1. Standing Height")
+                    .font(.subheadline.weight(.semibold))
+
+                Spacer()
+
+                if robot.isSendingBodyHeight {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            Text("Set Spot's body-height offset relative to its nominal stand. Applying a height stops active phone motion first.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                Text("-20 cm")
+                    .font(.caption2.monospacedDigit())
+
+                Slider(
+                    value: $selectedBodyHeightMeters,
+                    in: AppConfig.minimumBodyHeightMeters...AppConfig.maximumBodyHeightMeters,
+                    step: 0.02
+                )
+
+                Text("+20 cm")
+                    .font(.caption2.monospacedDigit())
+            }
+
+            Text("Offset: \((selectedBodyHeightMeters * 100).formatted(.number.precision(.fractionLength(0)))) cm")
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 12) {
+                Button {
+                    selectedBodyHeightMeters = 0
+                    sendSelectedBodyHeight()
+                } label: {
+                    Label("Nominal", systemImage: "arrow.uturn.backward")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    sendSelectedBodyHeight()
+                } label: {
+                    Label("Apply Height", systemImage: "arrow.up.and.down")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .disabled(!canSetBodyHeight)
+            .opacity(canSetBodyHeight ? 1 : 0.45)
+        }
+    }
+
     private var rotationController: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("1. Direct Rotation")
+            Text("2. Direct Rotation")
                 .font(.subheadline.weight(.semibold))
 
             Text("Press and hold Left or Right. Releasing the button stops rotation.")
@@ -640,7 +720,7 @@ struct ContentView: View {
 
     private var directMovementController: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("2. Direct Movement")
+            Text("3. Direct Movement")
                 .font(.subheadline.weight(.semibold))
 
             Text("Press and hold an arrow to move. Releasing it stops the robot.")
@@ -694,7 +774,7 @@ struct ContentView: View {
 
     private var waypointController: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("3. Body-Relative Waypoint")
+            Text("4. Body-Relative Waypoint")
                 .font(.subheadline.weight(.semibold))
 
             Text("Tap the square. Spot will face along the line from the center to the target.")
@@ -971,6 +1051,14 @@ struct ContentView: View {
             forward: command.forward,
             strafe: command.strafe,
             yaw: command.yaw
+        )
+    }
+
+    private func sendSelectedBodyHeight() {
+        robot.sendBodyHeight(
+            ip: jetsonIP,
+            token: token,
+            height: selectedBodyHeightMeters
         )
     }
 

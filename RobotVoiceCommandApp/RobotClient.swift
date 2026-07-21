@@ -37,6 +37,9 @@ final class RobotClient: ObservableObject {
     @Published var isSendingRobotMode = false
     @Published var controlSourceMessage: String?
     @Published var isSendingControlSource = false
+    @Published var bodyHeightMeters = 0.0
+    @Published var bodyHeightMessage: String?
+    @Published var isSendingBodyHeight = false
 
     private var webSocketTask: URLSessionWebSocketTask?
     private let jsonDecoder = JSONDecoder()
@@ -390,6 +393,92 @@ final class RobotClient: ObservableObject {
         task.resume()
     }
 
+    func sendBodyHeight(ip: String, token: String, height: Double) {
+        let trimmedIP = normalizedHost(from: ip)
+
+        lastError = nil
+        bodyHeightMessage = nil
+        isSendingBodyHeight = false
+
+        guard connectionState == "Connected" else {
+            lastError = "Connect the live status stream before changing body height."
+            return
+        }
+        guard phoneControlEnabled else {
+            lastError = "Body-height control requires the Phone control source and WALK mode."
+            return
+        }
+        guard height.isFinite,
+              height >= AppConfig.minimumBodyHeightMeters,
+              height <= AppConfig.maximumBodyHeightMeters else {
+            lastError = "Body height is outside the allowed range."
+            return
+        }
+        guard !trimmedIP.isEmpty else {
+            lastError = "Jetson IP is required."
+            return
+        }
+        guard let url = bodyHeightURL(ip: trimmedIP) else {
+            lastError = "Jetson IP is invalid."
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 8
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            request.httpBody = try jsonEncoder.encode(
+                BodyHeightRequest(
+                    height: height,
+                    token: token,
+                    source: AppConfig.commandSource
+                )
+            )
+        } catch {
+            lastError = "Could not encode body height: \(error.localizedDescription)"
+            return
+        }
+
+        isSendingBodyHeight = true
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isSendingBodyHeight = false
+
+                if let error {
+                    self.lastError = "Cannot reach Jetson at \(trimmedIP):\(AppConfig.defaultPort). \(error.localizedDescription)"
+                    return
+                }
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    self.lastError = "Jetson returned an invalid body-height response."
+                    return
+                }
+
+                switch httpResponse.statusCode {
+                case 200:
+                    guard let data,
+                          let response = try? self.jsonDecoder.decode(
+                              BodyHeightResponse.self,
+                              from: data
+                          ),
+                          response.ok else {
+                        self.lastError = "Jetson returned an unreadable body-height response."
+                        return
+                    }
+                    self.bodyHeightMeters = response.height
+                    self.bodyHeightMessage = response.message
+                case 401:
+                    self.lastError = "Invalid token. Please check the token on the Jetson bridge."
+                default:
+                    self.lastError = self.bridgeErrorDetail(from: data)
+                        ?? "Jetson returned HTTP \(httpResponse.statusCode) while changing body height."
+                }
+            }
+        }.resume()
+    }
+
     func sendRobotMode(ip: String, token: String, mode: String) {
         let trimmedIP = normalizedHost(from: ip)
         let normalizedMode = mode.lowercased()
@@ -591,6 +680,7 @@ final class RobotClient: ObservableObject {
         manualVelocityTask = nil
         pendingManualVelocityCommand = nil
         phoneControlEnabled = false
+        bodyHeightMeters = 0.0
         controlSource = "unknown"
         physicalControlSource = "unknown"
         robotMode = "unknown"
@@ -621,6 +711,7 @@ final class RobotClient: ObservableObject {
                 case .failure(let error):
                     self.connectionState = "Disconnected"
                     self.phoneControlEnabled = false
+                    self.bodyHeightMeters = 0.0
                     self.controlSource = "unknown"
                     self.physicalControlSource = "unknown"
                     self.robotMode = "unknown"
@@ -704,6 +795,8 @@ final class RobotClient: ObservableObject {
                         ?? false
                     phoneControlEnabled = controlState["phone_control_enabled"] as? Bool
                         ?? (controlSource == "sbus" && robotMode == "walk")
+                    bodyHeightMeters = (controlState["body_height_m"] as? NSNumber)?.doubleValue
+                        ?? bodyHeightMeters
                 } else {
                     appSourceControlEnabled = false
                     appSourceOverrideActive = false
@@ -766,6 +859,10 @@ final class RobotClient: ObservableObject {
 
     private func manualVelocityURL(ip: String) -> URL? {
         URL(string: "http://\(ip):\(AppConfig.defaultPort)\(AppConfig.manualVelocityPath)")
+    }
+
+    private func bodyHeightURL(ip: String) -> URL? {
+        URL(string: "http://\(ip):\(AppConfig.defaultPort)\(AppConfig.bodyHeightPath)")
     }
 
     private func robotModeURL(ip: String) -> URL? {

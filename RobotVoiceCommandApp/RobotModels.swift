@@ -71,6 +71,26 @@ struct ManualVelocityResponse: Codable {
     }
 }
 
+struct BodyHeightRequest: Codable {
+    let height: Double
+    let token: String
+    let source: String
+}
+
+struct BodyHeightResponse: Codable {
+    let ok: Bool
+    let publishedTopic: String?
+    let height: Double
+    let message: String
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case publishedTopic = "published_topic"
+        case height
+        case message
+    }
+}
+
 struct RobotModeRequest: Codable {
     let mode: String
     let token: String
