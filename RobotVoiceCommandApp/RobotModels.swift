@@ -11,12 +11,47 @@ struct CommandResponse: Codable {
     let publishedTopic: String?
     let commandType: String?
     let text: String?
+    let armActionName: String?
+    let armSendStampSec: Double?
 
     enum CodingKeys: String, CodingKey {
         case ok
         case publishedTopic = "published_topic"
         case commandType = "command_type"
         case text
+        case armActionName = "arm_action_name"
+        case armSendStampSec = "arm_send_stamp_sec"
+    }
+}
+
+struct ArmSkillStatus: Codable, Equatable {
+    let commandId: Int
+    let actionName: String
+    let status: String
+    let message: String?
+    let stampSec: Double
+
+    enum CodingKeys: String, CodingKey {
+        case commandId = "command_id"
+        case actionName = "action_name"
+        case status
+        case message
+        case stampSec = "stamp_sec"
+    }
+
+    var normalizedStatus: String {
+        status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    var isTerminal: Bool {
+        ["completed", "failed", "canceled", "rejected"].contains(normalizedStatus)
+    }
+
+    var displayText: String {
+        if let message, !message.isEmpty {
+            return message
+        }
+        return "\(actionName): \(normalizedStatus)"
     }
 }
 

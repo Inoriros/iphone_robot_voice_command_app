@@ -46,6 +46,7 @@ struct ContentView: View {
     @State private var selectedWaypointX = 0.0
     @State private var selectedWaypointY = 0.0
     @State private var selectedBodyHeightMeters = 0.0
+    @State private var allowNextArmCommandToPreempt = false
     @AppStorage("manualControlAxisRangeMeters") private var waypointRangeMeters =
         AppConfig.defaultManualControlAxisRangeMeters
 
@@ -54,11 +55,21 @@ struct ContentView: View {
     }
 
     private var canSendCommand: Bool {
-        !trimmedCommand.isEmpty && !jetsonIP.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !trimmedCommand.isEmpty, canSendControlCommand else { return false }
+        if AppConfig.armActionName(for: trimmedCommand) != nil {
+            return canSendArmCommand
+        }
+        return true
     }
 
     private var canSendControlCommand: Bool {
         !jetsonIP.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var canSendArmCommand: Bool {
+        canSendControlCommand
+            && robot.connectionState == "Connected"
+            && (!robot.isArmCommandActive || allowNextArmCommandToPreempt)
     }
 
     private var canCheckBattery: Bool {
@@ -140,6 +151,11 @@ struct ContentView: View {
             .onChange(of: robot.bodyHeightMeters) { _, height in
                 if !robot.isSendingBodyHeight {
                     selectedBodyHeightMeters = height
+                }
+            }
+            .onChange(of: robot.isArmCommandActive) { _, isActive in
+                if !isActive {
+                    allowNextArmCommandToPreempt = false
                 }
             }
             .onChange(of: scenePhase) { _, phase in
@@ -314,7 +330,7 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
 
                 Button {
-                    robot.sendCommand(ip: jetsonIP, token: token, text: trimmedCommand)
+                    sendCommandText(trimmedCommand)
                 } label: {
                     Label("Send", systemImage: "paperplane.fill")
                         .frame(maxWidth: .infinity)
@@ -458,6 +474,15 @@ struct ContentView: View {
             Text("Robot Arm")
                 .font(.headline)
 
+            if robot.isArmCommandActive {
+                Toggle(
+                    "Allow next arm command to replace active skill",
+                    isOn: $allowNextArmCommandToPreempt
+                )
+                .font(.subheadline)
+                .tint(.orange)
+            }
+
             Grid(horizontalSpacing: 12, verticalSpacing: 12) {
                 GridRow {
                     Button {
@@ -538,9 +563,38 @@ struct ContentView: View {
                     .disabled(!canSendControlCommand)
                 }
             }
+            .disabled(!canSendArmCommand)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
+                    Label(robot.armCommandStatusText, systemImage: armSkillStatusIcon)
+                        .foregroundStyle(armSkillStatusColor)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if robot.isArmCommandActive {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+
+                if let status = robot.latestArmSkillStatus {
+                    Divider()
+                    labeledValue("Command ID", String(status.commandId))
+                    labeledValue("Action", status.actionName)
+                    labeledValue("Status", status.normalizedStatus.uppercased())
+                    labeledValue(
+                        "ROS stamp",
+                        status.stampSec.formatted(.number.precision(.fractionLength(3)))
+                    )
+                }
+            }
+            .font(.subheadline)
+            .padding()
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             Label(
-                "Observe before grasping. Tap each bottle action once and wait for it to finish before tapping another; a new action preempts the active one.",
+                "Connect the live status stream before using the arm. While a skill is active, enable the one-shot replacement switch to send a new skill that preempts it. Observe before grasping.",
                 systemImage: "exclamationmark.triangle"
             )
             .font(.caption)
@@ -1060,6 +1114,44 @@ struct ContentView: View {
         .font(.footnote)
     }
 
+    private var armSkillStatusIcon: String {
+        if robot.armCommandTimedOut {
+            return "exclamationmark.triangle.fill"
+        }
+
+        switch robot.latestArmSkillStatus?.normalizedStatus {
+        case "completed":
+            return "checkmark.circle.fill"
+        case "failed", "rejected":
+            return "xmark.octagon.fill"
+        case "canceled":
+            return "slash.circle.fill"
+        case "accepted", "started", "running":
+            return "gearshape.2.fill"
+        default:
+            return robot.isArmCommandActive ? "clock.fill" : "info.circle"
+        }
+    }
+
+    private var armSkillStatusColor: Color {
+        if robot.armCommandTimedOut {
+            return .red
+        }
+
+        switch robot.latestArmSkillStatus?.normalizedStatus {
+        case "completed":
+            return .green
+        case "failed", "rejected":
+            return .red
+        case "canceled":
+            return .orange
+        case "accepted", "started", "running":
+            return .blue
+        default:
+            return robot.isArmCommandActive ? .orange : .secondary
+        }
+    }
+
     private var connectionIconName: String {
         switch robot.connectionState {
         case "Connected":
@@ -1413,10 +1505,29 @@ struct ContentView: View {
         min(max(progress, 0), 1)
     }
 
+    private func sendCommandText(_ text: String) {
+        if let actionName = AppConfig.armActionName(for: text) {
+            let isReplacingActiveSkill =
+                robot.isArmCommandActive && allowNextArmCommandToPreempt
+            robot.sendArmCommand(
+                ip: jetsonIP,
+                token: token,
+                text: text,
+                actionName: actionName,
+                allowPreemption: allowNextArmCommandToPreempt
+            )
+            if isReplacingActiveSkill {
+                allowNextArmCommandToPreempt = false
+            }
+        } else {
+            robot.sendCommand(ip: jetsonIP, token: token, text: text)
+        }
+    }
+
     private func sendFixedCommand(_ text: String) {
         speech.stopRecording()
         commandText = text
-        robot.sendCommand(ip: jetsonIP, token: token, text: text)
+        sendCommandText(text)
     }
 
     private func formattedTimestamp(_ timestamp: Double) -> String {

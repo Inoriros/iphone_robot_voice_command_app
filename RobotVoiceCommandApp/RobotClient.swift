@@ -40,14 +40,59 @@ final class RobotClient: ObservableObject {
     @Published var bodyHeightMeters = 0.0
     @Published var bodyHeightMessage: String?
     @Published var isSendingBodyHeight = false
+    @Published var latestArmSkillStatus: ArmSkillStatus?
+    @Published var armCommandStatusText = "No arm skill status received yet"
+    @Published var isArmCommandActive = false
+    @Published var activeArmActionName: String?
+    @Published var activeArmCommandID: Int?
+    @Published var armCommandTimedOut = false
 
     private var webSocketTask: URLSessionWebSocketTask?
     private let jsonDecoder = JSONDecoder()
     private let jsonEncoder = JSONEncoder()
     private var manualVelocityTask: URLSessionDataTask?
     private var pendingManualVelocityCommand: QueuedManualVelocityCommand?
+    private var armStatusBuffer: [ArmSkillStatus] = []
+    private var pendingArmActionName: String?
+    private var pendingArmSendStampSec: Double?
+    private var armTimeoutTask: Task<Void, Never>?
+    private var armCommandGeneration = 0
+    private var newestArmCommandID: Int?
+    private var latestArmStatusStampSec: Double?
 
     func sendCommand(ip: String, token: String, text: String) {
+        sendCommandRequest(ip: ip, token: token, text: text, armActionName: nil)
+    }
+
+    func sendArmCommand(
+        ip: String,
+        token: String,
+        text: String,
+        actionName: String,
+        allowPreemption: Bool = false
+    ) {
+        guard connectionState == "Connected" else {
+            lastError = "Connect the live status stream before sending an arm command."
+            return
+        }
+        guard !isArmCommandActive || allowPreemption else {
+            lastError = "Wait for the active arm command to finish, or enable one-shot replacement."
+            return
+        }
+        sendCommandRequest(
+            ip: ip,
+            token: token,
+            text: text,
+            armActionName: actionName
+        )
+    }
+
+    private func sendCommandRequest(
+        ip: String,
+        token: String,
+        text: String,
+        armActionName: String?
+    ) {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedIP = normalizedHost(from: ip)
 
@@ -83,42 +128,90 @@ final class RobotClient: ObservableObject {
             return
         }
 
+        if let armActionName {
+            beginArmCommand(actionName: armActionName)
+        }
+
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
                 guard let self else { return }
 
                 if let error {
-                    self.lastError = "Cannot reach Jetson at \(trimmedIP):\(AppConfig.defaultPort). \(error.localizedDescription)"
+                    let message = "Cannot reach Jetson at \(trimmedIP):\(AppConfig.defaultPort). \(error.localizedDescription)"
+                    self.lastError = message
                     self.lastCommandSendSucceeded = false
+                    if armActionName != nil {
+                        self.failArmCommandRequest(message)
+                    }
                     return
                 }
 
                 guard let httpResponse = response as? HTTPURLResponse else {
-                    self.lastError = "Jetson returned an invalid response."
+                    let message = "Jetson returned an invalid response."
+                    self.lastError = message
                     self.lastCommandSendSucceeded = false
+                    if armActionName != nil {
+                        self.failArmCommandRequest(message)
+                    }
                     return
                 }
 
                 switch httpResponse.statusCode {
                 case 200:
-                    self.lastCommandSendSucceeded = true
-                    if let data, let response = try? self.jsonDecoder.decode(CommandResponse.self, from: data), response.ok {
-                        self.lastCommandMessage = "Command sent: \(response.text ?? trimmedText)"
+                    let commandResponse = data.flatMap {
+                        try? self.jsonDecoder.decode(CommandResponse.self, from: $0)
+                    }
+
+                    if let armActionName {
+                        guard let commandResponse,
+                              commandResponse.ok,
+                              commandResponse.commandType == "arm",
+                              commandResponse.armActionName == armActionName,
+                              let sendStampSec = commandResponse.armSendStampSec else {
+                            let message = "Jetson returned an incomplete arm-command response."
+                            self.lastError = message
+                            self.lastCommandSendSucceeded = false
+                            self.failArmCommandRequest(message)
+                            return
+                        }
+
+                        self.lastCommandSendSucceeded = true
+                        self.lastCommandMessage = "Command sent: \(commandResponse.text ?? trimmedText)"
+                        self.confirmArmCommandSent(
+                            actionName: armActionName,
+                            sendStampSec: sendStampSec
+                        )
+                    } else if let commandResponse, commandResponse.ok {
+                        self.lastCommandSendSucceeded = true
+                        self.lastCommandMessage = "Command sent: \(commandResponse.text ?? trimmedText)"
                     } else {
+                        self.lastCommandSendSucceeded = true
                         self.lastCommandMessage = "Command sent."
                     }
                 case 400:
-                    self.lastError = "Empty or invalid command."
+                    let message = "Empty or invalid command."
+                    self.lastError = message
                     self.lastCommandSendSucceeded = false
+                    if armActionName != nil {
+                        self.failArmCommandRequest(message)
+                    }
                 case 401:
-                    self.lastError = "Invalid token. Please check the token on the Jetson bridge."
+                    let message = "Invalid token. Please check the token on the Jetson bridge."
+                    self.lastError = message
                     self.lastCommandSendSucceeded = false
+                    if armActionName != nil {
+                        self.failArmCommandRequest(message)
+                    }
                 default:
                     let serverMessage = data.flatMap { String(data: $0, encoding: .utf8) }
-                    self.lastError = serverMessage?.isEmpty == false
+                    let message = serverMessage?.isEmpty == false
                         ? "Jetson returned HTTP \(httpResponse.statusCode): \(serverMessage!)"
                         : "Jetson returned HTTP \(httpResponse.statusCode)."
+                    self.lastError = message
                     self.lastCommandSendSucceeded = false
+                    if armActionName != nil {
+                        self.failArmCommandRequest(message)
+                    }
                 }
             }
         }.resume()
@@ -641,6 +734,176 @@ final class RobotClient: ObservableObject {
         }.resume()
     }
 
+    private func beginArmCommand(actionName: String) {
+        armCommandGeneration += 1
+        armTimeoutTask?.cancel()
+        armTimeoutTask = nil
+        armStatusBuffer.removeAll(keepingCapacity: true)
+        pendingArmActionName = actionName
+        pendingArmSendStampSec = nil
+        activeArmActionName = actionName
+        activeArmCommandID = nil
+        latestArmSkillStatus = nil
+        armCommandTimedOut = false
+        isArmCommandActive = true
+        armCommandStatusText = "Sending \(actionName)…"
+    }
+
+    private func confirmArmCommandSent(actionName: String, sendStampSec: Double) {
+        guard isArmCommandActive, pendingArmActionName == actionName else { return }
+
+        pendingArmSendStampSec = sendStampSec
+        armCommandStatusText = "Waiting for \(actionName) to be accepted…"
+        correlateBufferedArmStatuses()
+
+        if isArmCommandActive, activeArmCommandID == nil {
+            scheduleArmTimeout(
+                seconds: AppConfig.armCommandAcceptanceTimeoutSeconds,
+                message: "Timed out waiting for the arm controller to accept \(actionName)."
+            )
+        }
+    }
+
+    private func handleArmSkillStatus(_ status: ArmSkillStatus) {
+        armStatusBuffer.append(status)
+        if armStatusBuffer.count > 20 {
+            armStatusBuffer.removeFirst(armStatusBuffer.count - 20)
+        }
+
+        guard isArmCommandActive else {
+            if let newestArmCommandID {
+                guard status.commandId >= newestArmCommandID else { return }
+                if status.commandId == newestArmCommandID {
+                    if let latestArmStatusStampSec,
+                       status.stampSec < latestArmStatusStampSec {
+                        return
+                    }
+                    if latestArmSkillStatus?.isTerminal == true, !status.isTerminal {
+                        return
+                    }
+                }
+            }
+
+            newestArmCommandID = status.commandId
+            latestArmStatusStampSec = status.stampSec
+            latestArmSkillStatus = status
+            armCommandStatusText = status.displayText
+            armCommandTimedOut = false
+            return
+        }
+
+        if let activeArmCommandID {
+            guard status.commandId == activeArmCommandID,
+                  let sendStampSec = pendingArmSendStampSec,
+                  status.stampSec >= sendStampSec else {
+                return
+            }
+            processActiveArmStatus(status)
+            return
+        }
+
+        correlateBufferedArmStatuses()
+    }
+
+    private func correlateBufferedArmStatuses() {
+        guard isArmCommandActive,
+              activeArmCommandID == nil,
+              let actionName = pendingArmActionName,
+              let sendStampSec = pendingArmSendStampSec,
+              let acceptedIndex = armStatusBuffer.firstIndex(where: { status in
+                  status.actionName == actionName
+                      && status.stampSec >= sendStampSec
+                      && ["accepted", "rejected"].contains(status.normalizedStatus)
+              }) else {
+            return
+        }
+
+        let acceptedStatus = armStatusBuffer[acceptedIndex]
+        activeArmCommandID = acceptedStatus.commandId
+        newestArmCommandID = acceptedStatus.commandId
+        latestArmStatusStampSec = acceptedStatus.stampSec
+        processActiveArmStatus(acceptedStatus)
+
+        guard isArmCommandActive else { return }
+        for status in armStatusBuffer.suffix(from: armStatusBuffer.index(after: acceptedIndex)) {
+            guard status.commandId == acceptedStatus.commandId,
+                  status.stampSec >= sendStampSec else {
+                continue
+            }
+            processActiveArmStatus(status)
+            if !isArmCommandActive {
+                break
+            }
+        }
+    }
+
+    private func processActiveArmStatus(_ status: ArmSkillStatus) {
+        guard isArmCommandActive else { return }
+        newestArmCommandID = status.commandId
+        latestArmStatusStampSec = status.stampSec
+
+        latestArmSkillStatus = status
+        armCommandStatusText = status.displayText
+
+        if status.isTerminal {
+            armTimeoutTask?.cancel()
+            armTimeoutTask = nil
+            isArmCommandActive = false
+            pendingArmActionName = nil
+            pendingArmSendStampSec = nil
+
+            if ["failed", "rejected"].contains(status.normalizedStatus) {
+                lastError = "Arm command \(status.normalizedStatus): \(status.displayText)"
+            }
+            return
+        }
+
+        scheduleArmTimeout(
+            seconds: AppConfig.armCommandExecutionTimeoutSeconds,
+            message: "Arm status timed out while running \(status.actionName)."
+        )
+    }
+
+    private func failArmCommandRequest(_ message: String) {
+        guard isArmCommandActive else { return }
+
+        armTimeoutTask?.cancel()
+        armTimeoutTask = nil
+        isArmCommandActive = false
+        pendingArmActionName = nil
+        pendingArmSendStampSec = nil
+        activeArmCommandID = nil
+        armCommandStatusText = message
+    }
+
+    private func scheduleArmTimeout(seconds: Double, message: String) {
+        armTimeoutTask?.cancel()
+        let generation = armCommandGeneration
+        let nanoseconds = UInt64(max(seconds, 0) * 1_000_000_000)
+
+        armTimeoutTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+
+            guard let self,
+                  self.isArmCommandActive,
+                  self.armCommandGeneration == generation else {
+                return
+            }
+
+            self.armCommandTimedOut = true
+            self.isArmCommandActive = false
+            self.pendingArmActionName = nil
+            self.pendingArmSendStampSec = nil
+            self.armCommandStatusText = message
+            self.lastError = message
+            self.armTimeoutTask = nil
+        }
+    }
+
     func connectStatusWebSocket(ip: String) {
         let trimmedIP = normalizedHost(from: ip)
 
@@ -665,7 +928,6 @@ final class RobotClient: ObservableObject {
         webSocketTask = task
         task.resume()
 
-        connectionState = "Connected"
         receiveStatusMessage()
     }
 
@@ -690,6 +952,9 @@ final class RobotClient: ObservableObject {
         appModeOverrideActive = false
         appSourceControlEnabled = false
         appSourceOverrideActive = false
+        if isArmCommandActive {
+            armCommandStatusText = "Arm status stream disconnected; waiting for timeout or reconnect."
+        }
 
         if updateState {
             connectionState = "Disconnected"
@@ -721,6 +986,9 @@ final class RobotClient: ObservableObject {
                     self.appModeOverrideActive = false
                     self.appSourceControlEnabled = false
                     self.appSourceOverrideActive = false
+                    if self.isArmCommandActive {
+                        self.armCommandStatusText = "Arm status stream disconnected; the command timeout is still active."
+                    }
                     self.lastError = "Status stream disconnected. Tap Reconnect. \(error.localizedDescription)"
                     self.webSocketTask = nil
                 }
@@ -774,6 +1042,14 @@ final class RobotClient: ObservableObject {
                    ) {
                     latestEvidenceImageData = imageData
                     latestEvidenceImageFormat = imagePayload["format"] as? String
+                }
+                return
+            case "arm_skill_status":
+                if let nestedData = encodedJSON(eventData),
+                   let armStatus = try? jsonDecoder.decode(ArmSkillStatus.self, from: nestedData) {
+                    handleArmSkillStatus(armStatus)
+                } else {
+                    lastError = "Received an unreadable arm skill status."
                 }
                 return
             case "control_state":

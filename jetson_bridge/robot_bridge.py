@@ -19,7 +19,12 @@ from pydantic import BaseModel, Field
 try:
     import rclpy
     from rclpy.node import Node
-    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+    from rclpy.qos import (
+        DurabilityPolicy,
+        HistoryPolicy,
+        QoSProfile,
+        ReliabilityPolicy,
+    )
     from geometry_msgs.msg import PoseStamped, Twist
     from sensor_msgs.msg import CompressedImage
     from std_msgs.msg import Float32, String
@@ -29,6 +34,7 @@ except ImportError:
     rclpy = None
     Node = object
     DurabilityPolicy = None
+    HistoryPolicy = None
     QoSProfile = None
     ReliabilityPolicy = None
     PoseStamped = None
@@ -50,6 +56,7 @@ TASK_TOPIC = os.getenv("ROBOT_TASK_TOPIC", os.getenv("ROBOT_COMMAND_TOPIC", "/sc
 CONTROL_TOPIC = os.getenv("ROBOT_CONTROL_TOPIC", "/task_control")
 CURRENT_SUBTASK_TOPIC = os.getenv("ROBOT_CURRENT_SUBTASK_TOPIC", "/current_subtask")
 CURRENT_ARM_SUBTASK_TOPIC = os.getenv("ROBOT_CURRENT_ARM_SUBTASK_TOPIC", "/current_arm_subtask")
+ARM_SKILL_STATUS_TOPIC = os.getenv("ROBOT_ARM_SKILL_STATUS_TOPIC", "/arm_skill_status")
 HUMAN_WAYPOINT_TOPIC = os.getenv("ROBOT_HUMAN_WAYPOINT_TOPIC", "/human_way_point")
 HUMAN_VELOCITY_TOPIC = os.getenv(
     "ROBOT_HUMAN_VELOCITY_TOPIC",
@@ -154,6 +161,8 @@ class CommandResponse(BaseModel):
     published_topic: Optional[str] = None
     command_type: str = "task"
     text: Optional[str] = None
+    arm_action_name: Optional[str] = None
+    arm_send_stamp_sec: Optional[float] = None
 
 
 class BatteryRequest(BaseModel):
@@ -304,6 +313,12 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
             reliability=ReliabilityPolicy.RELIABLE,
         )
+        arm_skill_status_qos = QoSProfile(
+            depth=20,
+            history=HistoryPolicy.KEEP_LAST,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE,
+        )
         self._task_pub = self.create_publisher(String, TASK_TOPIC, 10)
         self._control_pub = self.create_publisher(String, CONTROL_TOPIC, 10)
         self._current_subtask_pub = self.create_publisher(
@@ -350,6 +365,12 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
                 transient_qos,
             )
         self.create_subscription(
+            String,
+            ARM_SKILL_STATUS_TOPIC,
+            lambda message: self._handle_status(ARM_SKILL_STATUS_TOPIC, message),
+            arm_skill_status_qos,
+        )
+        self.create_subscription(
             CompressedImage,
             IMAGE_EVIDENCE_TOPIC,
             self._handle_image_evidence,
@@ -366,7 +387,8 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             f"manual velocity -> {HUMAN_VELOCITY_TOPIC}, "
             f"body height -> {HUMAN_BODY_HEIGHT_TOPIC}, "
             f"status <- {CURRENT_SUBTASK_TOPIC}, {SUBTASK_STATUS_TOPIC}, "
-            f"{TASK_PLANNING_TOPIC}, {PROMPT_EVIDENCE_TOPIC}, "
+            f"{ARM_SKILL_STATUS_TOPIC}, {TASK_PLANNING_TOPIC}, "
+            f"{PROMPT_EVIDENCE_TOPIC}, "
             f"{IMAGE_EVIDENCE_TOPIC}, {SIM_CONTROL_TOPIC}"
         )
 
@@ -406,10 +428,11 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             f"published iPhone control to {CONTROL_TOPIC}: {command_name}"
         )
 
-    def publish_arm_action(self, command_name: str, source: str) -> None:
+    def publish_arm_action(self, command_name: str, source: str) -> float:
         payload = ARM_ACTION_COMMANDS[command_name]
         message = String()
         message.data = json.dumps(payload, separators=(",", ":"))
+        send_stamp_sec = self.get_clock().now().nanoseconds / 1_000_000_000.0
         self._current_arm_subtask_pub.publish(message)
         self._state.latest_command_text = command_name
 
@@ -417,6 +440,7 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             f"published iPhone arm action to {CURRENT_ARM_SUBTASK_TOPIC} "
             f"from {source}: {message.data}"
         )
+        return send_stamp_sec
 
     def publish_human_waypoint(self, x: float, y: float, yaw: float, source: str) -> None:
         message = PoseStamped()
@@ -549,6 +573,8 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             payload["type"] = "control_state"
         elif topic == SUBTASK_STATUS_TOPIC:
             payload["type"] = "subtask_status"
+        elif topic == ARM_SKILL_STATUS_TOPIC:
+            payload["type"] = "arm_skill_status"
         elif topic == TASK_PLANNING_TOPIC:
             payload["type"] = "task_plan"
         elif topic == PROMPT_EVIDENCE_TOPIC:
@@ -708,6 +734,7 @@ async def health() -> Dict[str, Any]:
         "control_topic": CONTROL_TOPIC,
         "current_subtask_topic": CURRENT_SUBTASK_TOPIC,
         "current_arm_subtask_topic": CURRENT_ARM_SUBTASK_TOPIC,
+        "arm_skill_status_topic": ARM_SKILL_STATUS_TOPIC,
         "human_waypoint_topic": HUMAN_WAYPOINT_TOPIC,
         "app_robot_mode_topic": APP_ROBOT_MODE_TOPIC,
         "app_control_source_topic": APP_CONTROL_SOURCE_TOPIC,
@@ -738,6 +765,10 @@ async def command(request: CommandRequest) -> CommandResponse:
     command_name = command_text.upper()
     is_control = command_name in CONTROL_COMMANDS
     is_arm_action = command_name in ARM_ACTION_COMMANDS
+    arm_action_name = (
+        str(ARM_ACTION_COMMANDS[command_name]["action_name"]) if is_arm_action else None
+    )
+    arm_send_stamp_sec: Optional[float] = None
 
     if ros_node is None:
         if not ALLOW_NO_ROS:
@@ -751,6 +782,7 @@ async def command(request: CommandRequest) -> CommandResponse:
             command_type = "control"
         elif is_arm_action:
             command_type = "arm"
+            arm_send_stamp_sec = time.time()
         else:
             command_type = "task"
     else:
@@ -759,7 +791,7 @@ async def command(request: CommandRequest) -> CommandResponse:
             published_topic = CONTROL_TOPIC
             command_type = "control"
         elif is_arm_action:
-            ros_node.publish_arm_action(command_name, request.source)
+            arm_send_stamp_sec = ros_node.publish_arm_action(command_name, request.source)
             published_topic = CURRENT_ARM_SUBTASK_TOPIC
             command_type = "arm"
         else:
@@ -772,6 +804,8 @@ async def command(request: CommandRequest) -> CommandResponse:
         published_topic=published_topic,
         command_type=command_type,
         text=command_name if is_control or is_arm_action else command_text,
+        arm_action_name=arm_action_name,
+        arm_send_stamp_sec=arm_send_stamp_sec,
     )
 
 
@@ -969,6 +1003,7 @@ async def status_stream(websocket: WebSocket) -> None:
         replay_order = (
             CONTROL_STATE_TOPIC,
             TASK_PLANNING_TOPIC,
+            ARM_SKILL_STATUS_TOPIC,
             CURRENT_SUBTASK_TOPIC,
             SUBTASK_STATUS_TOPIC,
             SIM_CONTROL_TOPIC,

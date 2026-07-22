@@ -24,7 +24,7 @@ Jetson bridge
   - FastAPI WebSocket /status
   - ROS 2 publishers: /scenario, /task_control, /current_arm_subtask, /human_way_point,
     /human_velocity_command, /human_body_height, /spot/app_robot_mode, and /spot/app_control_source
-  - ROS 2 subscribers: task status, /task_planning, and reasoning evidence
+  - ROS 2 subscribers: task status, /arm_skill_status, /task_planning, and reasoning evidence
 ```
 
 ## Repository Layout
@@ -252,8 +252,24 @@ the arm to the bottle observation pose. `ARM_RELEASE_BOTTLE` publishes
 `release_bottle`, while `ARM_PLACE_DOWN_BOTTLE` runs the place-down sequence.
 
 `/current_arm_subtask` uses reliable, transient-local, keep-last depth-1 QoS.
-Each button tap publishes its command once. Wait for the active operation to
-finish before tapping another because a new arm command preempts it.
+Each button tap publishes its command once, and the live status WebSocket must be
+connected before the app enables an arm command.
+
+The bridge subscribes to `/arm_skill_status` as `std_msgs/msg/String` with
+reliable, transient-local, keep-last depth-20 QoS. Immediately before publishing
+an arm command, it records the ROS clock and returns that send boundary in the
+`/command` response.
+
+The app buffers 20 status events and accepts only a matching `accepted` event
+whose `action_name` matches and whose `stamp_sec` is at least the send boundary.
+It then locks onto that `command_id` and ignores every other ID. Normally the arm
+buttons unlock only after `completed`, `failed`, `canceled`, `rejected`, or an app
+timeout. While a command is active, the user can explicitly enable the one-shot
+replacement switch and tap one new arm command to preempt it. Tracking resets to
+the replacement command's send boundary, so a late `canceled` event from the old
+command cannot replace the new command's status. Acceptance times out after 10
+seconds; an accepted arm command times out after 180 seconds without a subsequent
+status update.
 
 Before tapping **Grasp Bottle**, the wrist camera must see the bottle and
 `/detect_3d_bbox`, `/plan_pose_intu`, `/plan_joint_target`, and the
@@ -410,6 +426,9 @@ std_msgs/msg/String
 std_msgs/msg/String
 
 /current_arm_subtask
+std_msgs/msg/String
+
+/arm_skill_status
 std_msgs/msg/String
 
 /human_way_point

@@ -11,7 +11,7 @@ It exposes:
 - `POST /body_height` for authenticated standing-height offsets.
 - `POST /robot_mode` for authenticated app fallback mode requests.
 - `POST /control_source` for authenticated app fallback source requests.
-- `WebSocket /status` for live robot task status.
+- `WebSocket /status` for live robot task and arm-skill status.
 - ROS 2 publisher: `/scenario` as `std_msgs/msg/String` for normal spoken tasks.
 - ROS 2 publisher: `/task_control` as `std_msgs/msg/String` for stop/pause/resume controls.
 - ROS 2 fallback publisher: `/current_subtask` for immediate foreground-skill preemption.
@@ -21,7 +21,9 @@ It exposes:
 - ROS 2 publisher: `/human_body_height` as `std_msgs/msg/Float32`.
 - ROS 2 publisher: `/spot/app_robot_mode` as `std_msgs/msg/String`.
 - ROS 2 publisher: `/spot/app_control_source` as `std_msgs/msg/String`.
-- ROS 2 status subscribers: `/spot/control_state`, `/current_subtask`, `/subtask_status`, `/task_planning`, `/subtask_prompt_evidance`, `/subtask_image_evidence`, `/sim_control`, plus optional `/task_status`.
+- ROS 2 status subscribers: `/spot/control_state`, `/current_subtask`,
+  `/subtask_status`, `/arm_skill_status`, `/task_planning`,
+  `/subtask_prompt_evidance`, `/subtask_image_evidence`, `/sim_control`, plus optional `/task_status`.
 
 ## How It Connects To The Robot
 
@@ -262,8 +264,24 @@ The seven arm buttons send `ARM_RELAX`, `ARM_BUTTON`, `ARM_PRESS`,
 `release_bottle`, while `ARM_PLACE_DOWN_BOTTLE` performs the place-down sequence.
 
 `/current_arm_subtask` uses reliable, transient-local, keep-last depth-1 QoS.
-Each tap publishes once. Wait for the current operation to finish before tapping
-another button because a newly published arm command preempts the active one.
+Each tap publishes once, and the app requires an active `/status` WebSocket before
+enabling arm controls.
+
+The bridge subscribes to `/arm_skill_status` as `std_msgs/msg/String` with
+reliable, transient-local, keep-last depth-20 QoS and forwards each JSON object as
+an `arm_skill_status` WebSocket event. The `/command` response for an arm action
+also includes `arm_action_name` and `arm_send_stamp_sec`; the latter is captured
+from the ROS clock immediately before `/current_arm_subtask` is published.
+
+The app buffers 20 events, finds a matching `accepted` status at or after that
+send boundary, saves its `command_id`, and then ignores every other command ID.
+Arm controls normally remain disabled through `accepted`, `started`, and
+`running`, and unlock on `completed`, `failed`, `canceled`, `rejected`, or timeout.
+While a command is active, a one-shot replacement switch can explicitly enable
+one new arm command to preempt it. Tracking resets to the replacement command's
+send boundary and command ID, so a late status from the old command cannot replace
+the new command's status. The acceptance timeout is 10 seconds; execution uses a
+180-second inactivity timeout.
 
 Before dispatching **Grasp Bottle**, place the bottle in the wrist-camera view
 and ensure `/detect_3d_bbox`, `/plan_pose_intu`, `/plan_joint_target`, and the
