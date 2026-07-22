@@ -120,8 +120,18 @@ ARM_ACTION_COMMANDS = {
         "start_pos": [0.0, 0.0, 0.0],
         "target_pos": [0.0, 0.0, 0.0],
     },
+    "ARM_OBSERVE_BOTTLE": {
+        "action_name": "move_to_bottle",
+        "start_pos": [0.0, 0.0, 0.0],
+        "target_pos": [0.0, 0.0, 0.0],
+    },
     "ARM_GRASP_BOTTLE": {
         "action_name": "grasp_water_bottle",
+        "start_pos": [0.0, 0.0, 0.0],
+        "target_pos": [0.0, 0.0, 0.0],
+    },
+    "ARM_PLACE_DOWN_BOTTLE": {
+        "action_name": "place_down_bottle",
         "start_pos": [0.0, 0.0, 0.0],
         "target_pos": [0.0, 0.0, 0.0],
     },

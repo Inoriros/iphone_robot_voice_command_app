@@ -496,9 +496,31 @@ struct ContentView: View {
 
                 GridRow {
                     Button {
+                        sendFixedCommand(AppConfig.armObserveBottleCommand)
+                    } label: {
+                        Label("Observe Bottle", systemImage: "eye.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.teal)
+                    .disabled(!canSendControlCommand)
+
+                    Button {
                         sendFixedCommand(AppConfig.armGraspBottleCommand)
                     } label: {
-                        Label("Grasp Bottle", systemImage: "waterbottle.fill")
+                        Label("Detect & Grasp", systemImage: "waterbottle.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.teal)
+                    .disabled(!canSendControlCommand)
+                }
+
+                GridRow {
+                    Button {
+                        sendFixedCommand(AppConfig.armPlaceDownBottleCommand)
+                    } label: {
+                        Label("Place Down Bottle", systemImage: "arrow.down.to.line")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -509,7 +531,7 @@ struct ContentView: View {
             }
 
             Label(
-                "Before grasping, put the bottle in the wrist-camera view and start /detect_3d_bbox, /plan_pose_intu, /plan_joint_target, and pure_arm_pickup. Tap once per attempt.",
+                "Run Observe, Detect & Grasp, then Place Down in order. Tap each step once and wait for it to finish before tapping the next; a new step preempts the active one.",
                 systemImage: "exclamationmark.triangle"
             )
             .font(.caption)
