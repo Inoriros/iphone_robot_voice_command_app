@@ -49,9 +49,19 @@ struct ContentView: View {
     @State private var allowNextArmCommandToPreempt = false
     @AppStorage("manualControlAxisRangeMeters") private var waypointRangeMeters =
         AppConfig.defaultManualControlAxisRangeMeters
+    @AppStorage("driveJoystickThrottleMultiplier")
+    private var driveJoystickThrottleMultiplier =
+        AppConfig.defaultDriveJoystickThrottle
 
     private var trimmedCommand: String {
         commandText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var clampedDriveJoystickThrottleMultiplier: Double {
+        min(
+            max(driveJoystickThrottleMultiplier, AppConfig.minimumDriveJoystickThrottle),
+            AppConfig.maximumDriveJoystickThrottle
+        )
     }
 
     private var canSendCommand: Bool {
@@ -908,9 +918,26 @@ struct ContentView: View {
             Text("4. Drive Joystick")
                 .font(.subheadline.weight(.semibold))
 
-            Text("Drag up or down for throttle and left or right for steering. Diagonal drag moves and turns at the same time; releasing stops Spot.")
+            Text("Choose the maximum throttle, then drag up or down to move and left or right to steer. Diagonal drag moves and turns at the same time; releasing stops Spot.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            VStack(spacing: 6) {
+                HStack {
+                    Text("Maximum throttle")
+                    Spacer()
+                    Text("\(Int((clampedDriveJoystickThrottleMultiplier * 100).rounded()))%")
+                        .monospacedDigit()
+                }
+                .font(.caption)
+
+                Slider(
+                    value: $driveJoystickThrottleMultiplier,
+                    in: AppConfig.minimumDriveJoystickThrottle...AppConfig.maximumDriveJoystickThrottle,
+                    step: 0.1
+                )
+                .disabled(driveJoystickActive)
+            }
 
             GeometryReader { geometry in
                 let side = min(geometry.size.width, 240.0)
@@ -995,7 +1022,7 @@ struct ContentView: View {
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
 
-            Text("This car-style joystick sends forward and yaw together; lateral strafe remains on the Left/Right buttons above.")
+            Text("The selected forward/reverse limit is stored on this iPhone; lateral strafe remains on the Left/Right buttons above.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -1344,7 +1371,8 @@ struct ContentView: View {
 
         driveJoystickOffset = CGSize(width: offsetX, height: offsetY)
         driveJoystickCommand = DriveJoystickCommand(
-            forward: driveAxisValue(-Double(offsetY / maximumTravel)),
+            forward: driveAxisValue(-Double(offsetY / maximumTravel))
+                * clampedDriveJoystickThrottleMultiplier,
             yaw: driveAxisValue(-Double(offsetX / maximumTravel))
         )
         driveJoystickActive = true

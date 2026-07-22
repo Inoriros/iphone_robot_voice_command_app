@@ -16,6 +16,9 @@ enum AppConfig {
     static let defaultManualControlAxisRangeMeters = 2.0
     static let minimumManualControlAxisRangeMeters = 2.0
     static let maximumManualControlAxisRangeMeters = 6.0
+    static let minimumDriveJoystickThrottle = 1.0
+    static let defaultDriveJoystickThrottle = 1.5
+    static let maximumDriveJoystickThrottle = 2.0
     static let minimumBodyHeightMeters = -0.20
     static let maximumBodyHeightMeters = 0.20
     static let armStatusBufferLimit = 100

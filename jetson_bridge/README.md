@@ -49,13 +49,16 @@ The app calculates yaw with `atan2(y, x)`, so Spot faces along the line from the
 panel center to the target.
 
 Press-and-hold rotation and movement buttons POST normalized `forward`, `strafe`,
-and `yaw` values to `/manual_velocity`. The car-style joystick uses the same
-endpoint with vertical drag mapped to `forward`, horizontal drag mapped to `yaw`,
-and `strafe` held at zero. Diagonal drag therefore moves and rotates Spot at the
-same time. The bridge publishes a `Twist` on `/human_velocity_command`. The app
-refreshes the command every 120 ms, publishes zero on release, and the Spot
-controller stops after 0.35 seconds without a refresh. Physical SBUS stick motion
-takes priority.
+and `yaw` values in `[-1, 1]` to `/manual_velocity`. The car-style joystick has
+a persistent 100%–200% maximum-throttle slider, initially set to 150%. Vertical
+drag maps to `forward` using the selected 1.0–2.0 limit, horizontal drag maps to
+`yaw` in `[-1, 1]`, and `strafe` stays zero. Diagonal drag therefore moves and
+rotates Spot at the same time. With the default 0.5 m/s base scale, the slider
+covers 0.5–1.0 m/s and its initial setting produces 0.75 m/s without increasing
+the hold-button throttle. The bridge publishes a `Twist` on
+`/human_velocity_command`. The app refreshes the command every 120 ms, publishes
+zero on release, and the Spot controller stops after 0.35 seconds without a
+refresh. Physical SBUS stick motion takes priority.
 
 The standing-height slider POSTs a body-height offset to `/body_height`. The
 bridge publishes `std_msgs/msg/Float32` on `/human_body_height`. The Spot
@@ -80,6 +83,14 @@ axis and can be changed with:
 
 ```bash
 export ROBOT_MANUAL_CONTROL_AXIS_LIMIT_METERS="6"
+```
+
+The bridge forward-input limit and Spot controller input limit both default to
+2.0 and must remain aligned if customized:
+
+```bash
+export ROBOT_MANUAL_VELOCITY_FORWARD_LIMIT="2.0"
+ros2 launch spot_contoller spot_contoller.launch.py human_velocity_forward_input_limit:=2.0
 ```
 
 Body-height HTTP and controller limits default to ±0.20 m. Keep the bridge and

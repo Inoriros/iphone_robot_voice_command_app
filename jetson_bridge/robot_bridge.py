@@ -92,6 +92,9 @@ BATTERY_CHECK_TIMEOUT_SECONDS = float(
 MANUAL_CONTROL_AXIS_LIMIT_METERS = float(
     os.getenv("ROBOT_MANUAL_CONTROL_AXIS_LIMIT_METERS", "6")
 )
+MANUAL_VELOCITY_FORWARD_LIMIT = float(
+    os.getenv("ROBOT_MANUAL_VELOCITY_FORWARD_LIMIT", "2.0")
+)
 BODY_HEIGHT_MIN_METERS = float(
     os.getenv("ROBOT_BODY_HEIGHT_MIN_METERS", "-0.20")
 )
@@ -200,7 +203,11 @@ class ManualControlResponse(BaseModel):
 
 
 class ManualVelocityRequest(BaseModel):
-    forward: float = Field(..., ge=-1.0, le=1.0)
+    forward: float = Field(
+        ...,
+        ge=-MANUAL_VELOCITY_FORWARD_LIMIT,
+        le=MANUAL_VELOCITY_FORWARD_LIMIT,
+    )
     strafe: float = Field(..., ge=-1.0, le=1.0)
     yaw: float = Field(..., ge=-1.0, le=1.0)
     token: str
@@ -783,6 +790,7 @@ async def health() -> Dict[str, Any]:
         "app_control_source_topic": APP_CONTROL_SOURCE_TOPIC,
         "control_state_topic": CONTROL_STATE_TOPIC,
         "human_velocity_topic": HUMAN_VELOCITY_TOPIC,
+        "manual_velocity_forward_limit": MANUAL_VELOCITY_FORWARD_LIMIT,
         "manual_control_axis_limit_m": MANUAL_CONTROL_AXIS_LIMIT_METERS,
         "subtask_status_topic": SUBTASK_STATUS_TOPIC,
         "task_planning_topic": TASK_PLANNING_TOPIC,

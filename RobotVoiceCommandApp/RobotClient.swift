@@ -413,8 +413,10 @@ final class RobotClient: ObservableObject {
             lastError = "Direct motion contains an invalid value."
             return
         }
-        guard abs(forward) <= 1, abs(strafe) <= 1, abs(yaw) <= 1 else {
-            lastError = "Direct motion is outside the normalized range."
+        guard abs(forward) <= AppConfig.maximumDriveJoystickThrottle,
+              abs(strafe) <= 1,
+              abs(yaw) <= 1 else {
+            lastError = "Direct motion is outside the allowed range."
             return
         }
         guard let url = manualVelocityURL(ip: trimmedIP) else {
