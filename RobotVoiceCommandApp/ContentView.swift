@@ -69,7 +69,10 @@ struct ContentView: View {
     private var canSendArmCommand: Bool {
         canSendControlCommand
             && robot.connectionState == "Connected"
-            && (!robot.isArmCommandActive || allowNextArmCommandToPreempt)
+            && (
+                !robot.isArmCommandActive
+                    || (robot.activeArmCommandID != nil && allowNextArmCommandToPreempt)
+            )
     }
 
     private var canCheckBattery: Bool {
@@ -474,7 +477,7 @@ struct ContentView: View {
             Text("Robot Arm")
                 .font(.headline)
 
-            if robot.isArmCommandActive {
+            if robot.isArmCommandActive, robot.activeArmCommandID != nil {
                 Toggle(
                     "Allow next arm command to replace active skill",
                     isOn: $allowNextArmCommandToPreempt

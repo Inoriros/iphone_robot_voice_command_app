@@ -260,16 +260,19 @@ reliable, transient-local, keep-last depth-20 QoS. Immediately before publishing
 an arm command, it records the ROS clock and returns that send boundary in the
 `/command` response.
 
-The app buffers 20 status events and accepts only a matching `accepted` event
-whose `action_name` matches and whose `stamp_sec` is at least the send boundary.
-It then locks onto that `command_id` and ignores every other ID. Normally the arm
-buttons unlock only after `completed`, `failed`, `canceled`, `rejected`, or an app
-timeout. While a command is active, the user can explicitly enable the one-shot
-replacement switch and tap one new arm command to preempt it. Tracking resets to
-the replacement command's send boundary, so a late `canceled` event from the old
-command cannot replace the new command's status. Acceptance times out after 10
-seconds; an accepted arm command times out after 180 seconds without a subsequent
-status update.
+The bridge and app each retain up to 100 arm status events. After a send, the app
+finds the first recognized lifecycle event whose `action_name` matches, whose
+`stamp_sec` is at least the send boundary, and whose `command_id` is not the prior
+command. It then locks onto that ID and ignores every other command. This also
+lets a reconnect recover when the original `accepted` event was missed but a
+later `started`, `running`, or terminal event is available.
+
+Arm buttons unlock only after `completed`, `failed`, `canceled`, or `rejected`.
+A 10-second acceptance delay or 180-second execution-status delay shows a warning
+but keeps the controls locked until status recovers. The one-shot replacement
+switch appears only after the current skill has a controller-issued command ID.
+Each HTTP completion is tied to its command generation, so a delayed response
+from an older request cannot clear or confirm the replacement command.
 
 Before tapping **Grasp Bottle**, the wrist camera must see the bottle and
 `/detect_3d_bbox`, `/plan_pose_intu`, `/plan_joint_target`, and the

@@ -18,6 +18,7 @@ enum AppConfig {
     static let maximumManualControlAxisRangeMeters = 6.0
     static let minimumBodyHeightMeters = -0.20
     static let maximumBodyHeightMeters = 0.20
+    static let armStatusBufferLimit = 100
     static let armCommandAcceptanceTimeoutSeconds = 10.0
     static let armCommandExecutionTimeoutSeconds = 180.0
     static let stopCurrentTaskCommand = "STOP_CURRENT_TASK"

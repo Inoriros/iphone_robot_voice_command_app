@@ -47,6 +47,18 @@ struct ArmSkillStatus: Codable, Equatable {
         ["completed", "failed", "canceled", "rejected"].contains(normalizedStatus)
     }
 
+    var canEstablishCommandIdentity: Bool {
+        [
+            "accepted",
+            "started",
+            "running",
+            "completed",
+            "failed",
+            "canceled",
+            "rejected",
+        ].contains(normalizedStatus)
+    }
+
     var displayText: String {
         if let message, !message.isEmpty {
             return message

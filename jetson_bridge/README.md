@@ -136,7 +136,9 @@ The bridge also sends:
 - `image_evidence`: `/subtask_image_evidence` with `format` and base64 image bytes.
 
 The latest event for each ROS topic is retained by the bridge and replayed to
-a newly connected status WebSocket.
+a newly connected status WebSocket. For `/arm_skill_status`, the bridge retains
+and replays up to 100 events in order so the app can recover command identity
+after a brief disconnect.
 
 ## Install on Jetson
 
@@ -273,15 +275,18 @@ an `arm_skill_status` WebSocket event. The `/command` response for an arm action
 also includes `arm_action_name` and `arm_send_stamp_sec`; the latter is captured
 from the ROS clock immediately before `/current_arm_subtask` is published.
 
-The app buffers 20 events, finds a matching `accepted` status at or after that
-send boundary, saves its `command_id`, and then ignores every other command ID.
-Arm controls normally remain disabled through `accepted`, `started`, and
-`running`, and unlock on `completed`, `failed`, `canceled`, `rejected`, or timeout.
-While a command is active, a one-shot replacement switch can explicitly enable
-one new arm command to preempt it. Tracking resets to the replacement command's
-send boundary and command ID, so a late status from the old command cannot replace
-the new command's status. The acceptance timeout is 10 seconds; execution uses a
-180-second inactivity timeout.
+The bridge and app each retain up to 100 arm events. The app correlates the first
+recognized lifecycle event at or after the send boundary whose `action_name`
+matches and whose `command_id` differs from the prior command. It then ignores
+every other command ID. Replayed `started`, `running`, or terminal events can
+therefore recover tracking even when the original `accepted` event was missed.
+
+Arm controls unlock only on `completed`, `failed`, `canceled`, or `rejected`.
+The 10-second acceptance delay and 180-second execution-status delay report a
+warning but keep controls locked until status recovers. The one-shot replacement
+switch is available only after the active skill has a controller-issued command
+ID. Request callbacks are generation-scoped, so a delayed response from an older
+request cannot alter the replacement command's state.
 
 Before dispatching **Grasp Bottle**, place the bottle in the wrist-camera view
 and ensure `/detect_3d_bbox`, `/plan_pose_intu`, `/plan_joint_target`, and the

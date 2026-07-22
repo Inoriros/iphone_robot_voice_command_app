@@ -59,6 +59,7 @@ final class RobotClient: ObservableObject {
     private var armCommandGeneration = 0
     private var newestArmCommandID: Int?
     private var latestArmStatusStampSec: Double?
+    private var armCommandIDBeforeSend: Int?
 
     func sendCommand(ip: String, token: String, text: String) {
         sendCommandRequest(ip: ip, token: token, text: text, armActionName: nil)
@@ -75,9 +76,15 @@ final class RobotClient: ObservableObject {
             lastError = "Connect the live status stream before sending an arm command."
             return
         }
-        guard !isArmCommandActive || allowPreemption else {
-            lastError = "Wait for the active arm command to finish, or enable one-shot replacement."
-            return
+        if isArmCommandActive {
+            guard allowPreemption else {
+                lastError = "Wait for the active arm command to finish, or enable one-shot replacement."
+                return
+            }
+            guard activeArmCommandID != nil else {
+                lastError = "Wait for the arm controller to identify the active skill before replacing it."
+                return
+            }
         }
         sendCommandRequest(
             ip: ip,
@@ -128,20 +135,24 @@ final class RobotClient: ObservableObject {
             return
         }
 
-        if let armActionName {
-            beginArmCommand(actionName: armActionName)
+        let armRequestGeneration = armActionName.map {
+            beginArmCommand(actionName: $0)
         }
 
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
                 guard let self else { return }
+                if let armRequestGeneration,
+                   self.armCommandGeneration != armRequestGeneration {
+                    return
+                }
 
                 if let error {
                     let message = "Cannot reach Jetson at \(trimmedIP):\(AppConfig.defaultPort). \(error.localizedDescription)"
                     self.lastError = message
                     self.lastCommandSendSucceeded = false
-                    if armActionName != nil {
-                        self.failArmCommandRequest(message)
+                    if let armRequestGeneration {
+                        self.failArmCommandRequest(message, generation: armRequestGeneration)
                     }
                     return
                 }
@@ -150,8 +161,8 @@ final class RobotClient: ObservableObject {
                     let message = "Jetson returned an invalid response."
                     self.lastError = message
                     self.lastCommandSendSucceeded = false
-                    if armActionName != nil {
-                        self.failArmCommandRequest(message)
+                    if let armRequestGeneration {
+                        self.failArmCommandRequest(message, generation: armRequestGeneration)
                     }
                     return
                 }
@@ -162,7 +173,7 @@ final class RobotClient: ObservableObject {
                         try? self.jsonDecoder.decode(CommandResponse.self, from: $0)
                     }
 
-                    if let armActionName {
+                    if let armActionName, let armRequestGeneration {
                         guard let commandResponse,
                               commandResponse.ok,
                               commandResponse.commandType == "arm",
@@ -171,7 +182,10 @@ final class RobotClient: ObservableObject {
                             let message = "Jetson returned an incomplete arm-command response."
                             self.lastError = message
                             self.lastCommandSendSucceeded = false
-                            self.failArmCommandRequest(message)
+                            self.failArmCommandRequest(
+                                message,
+                                generation: armRequestGeneration
+                            )
                             return
                         }
 
@@ -179,7 +193,8 @@ final class RobotClient: ObservableObject {
                         self.lastCommandMessage = "Command sent: \(commandResponse.text ?? trimmedText)"
                         self.confirmArmCommandSent(
                             actionName: armActionName,
-                            sendStampSec: sendStampSec
+                            sendStampSec: sendStampSec,
+                            generation: armRequestGeneration
                         )
                     } else if let commandResponse, commandResponse.ok {
                         self.lastCommandSendSucceeded = true
@@ -192,15 +207,15 @@ final class RobotClient: ObservableObject {
                     let message = "Empty or invalid command."
                     self.lastError = message
                     self.lastCommandSendSucceeded = false
-                    if armActionName != nil {
-                        self.failArmCommandRequest(message)
+                    if let armRequestGeneration {
+                        self.failArmCommandRequest(message, generation: armRequestGeneration)
                     }
                 case 401:
                     let message = "Invalid token. Please check the token on the Jetson bridge."
                     self.lastError = message
                     self.lastCommandSendSucceeded = false
-                    if armActionName != nil {
-                        self.failArmCommandRequest(message)
+                    if let armRequestGeneration {
+                        self.failArmCommandRequest(message, generation: armRequestGeneration)
                     }
                 default:
                     let serverMessage = data.flatMap { String(data: $0, encoding: .utf8) }
@@ -209,8 +224,8 @@ final class RobotClient: ObservableObject {
                         : "Jetson returned HTTP \(httpResponse.statusCode)."
                     self.lastError = message
                     self.lastCommandSendSucceeded = false
-                    if armActionName != nil {
-                        self.failArmCommandRequest(message)
+                    if let armRequestGeneration {
+                        self.failArmCommandRequest(message, generation: armRequestGeneration)
                     }
                 }
             }
@@ -734,7 +749,9 @@ final class RobotClient: ObservableObject {
         }.resume()
     }
 
-    private func beginArmCommand(actionName: String) {
+    @discardableResult
+    private func beginArmCommand(actionName: String) -> Int {
+        armCommandIDBeforeSend = activeArmCommandID ?? newestArmCommandID
         armCommandGeneration += 1
         armTimeoutTask?.cancel()
         armTimeoutTask = nil
@@ -747,10 +764,19 @@ final class RobotClient: ObservableObject {
         armCommandTimedOut = false
         isArmCommandActive = true
         armCommandStatusText = "Sending \(actionName)…"
+        return armCommandGeneration
     }
 
-    private func confirmArmCommandSent(actionName: String, sendStampSec: Double) {
-        guard isArmCommandActive, pendingArmActionName == actionName else { return }
+    private func confirmArmCommandSent(
+        actionName: String,
+        sendStampSec: Double,
+        generation: Int
+    ) {
+        guard isArmCommandActive,
+              armCommandGeneration == generation,
+              pendingArmActionName == actionName else {
+            return
+        }
 
         pendingArmSendStampSec = sendStampSec
         armCommandStatusText = "Waiting for \(actionName) to be accepted…"
@@ -759,15 +785,17 @@ final class RobotClient: ObservableObject {
         if isArmCommandActive, activeArmCommandID == nil {
             scheduleArmTimeout(
                 seconds: AppConfig.armCommandAcceptanceTimeoutSeconds,
-                message: "Timed out waiting for the arm controller to accept \(actionName)."
+                message: "Arm acceptance status is delayed for \(actionName); controls remain locked until status recovers."
             )
         }
     }
 
     private func handleArmSkillStatus(_ status: ArmSkillStatus) {
         armStatusBuffer.append(status)
-        if armStatusBuffer.count > 20 {
-            armStatusBuffer.removeFirst(armStatusBuffer.count - 20)
+        if armStatusBuffer.count > AppConfig.armStatusBufferLimit {
+            armStatusBuffer.removeFirst(
+                armStatusBuffer.count - AppConfig.armStatusBufferLimit
+            )
         }
 
         guard isArmCommandActive else {
@@ -810,23 +838,24 @@ final class RobotClient: ObservableObject {
               activeArmCommandID == nil,
               let actionName = pendingArmActionName,
               let sendStampSec = pendingArmSendStampSec,
-              let acceptedIndex = armStatusBuffer.firstIndex(where: { status in
+              let correlatedIndex = armStatusBuffer.firstIndex(where: { status in
                   status.actionName == actionName
                       && status.stampSec >= sendStampSec
-                      && ["accepted", "rejected"].contains(status.normalizedStatus)
+                      && status.commandId != armCommandIDBeforeSend
+                      && status.canEstablishCommandIdentity
               }) else {
             return
         }
 
-        let acceptedStatus = armStatusBuffer[acceptedIndex]
-        activeArmCommandID = acceptedStatus.commandId
-        newestArmCommandID = acceptedStatus.commandId
-        latestArmStatusStampSec = acceptedStatus.stampSec
-        processActiveArmStatus(acceptedStatus)
+        let correlatedStatus = armStatusBuffer[correlatedIndex]
+        activeArmCommandID = correlatedStatus.commandId
+        newestArmCommandID = correlatedStatus.commandId
+        latestArmStatusStampSec = correlatedStatus.stampSec
+        processActiveArmStatus(correlatedStatus)
 
         guard isArmCommandActive else { return }
-        for status in armStatusBuffer.suffix(from: armStatusBuffer.index(after: acceptedIndex)) {
-            guard status.commandId == acceptedStatus.commandId,
+        for status in armStatusBuffer.suffix(from: armStatusBuffer.index(after: correlatedIndex)) {
+            guard status.commandId == correlatedStatus.commandId,
                   status.stampSec >= sendStampSec else {
                 continue
             }
@@ -839,6 +868,10 @@ final class RobotClient: ObservableObject {
 
     private func processActiveArmStatus(_ status: ArmSkillStatus) {
         guard isArmCommandActive else { return }
+        if armCommandTimedOut {
+            armCommandTimedOut = false
+            lastError = nil
+        }
         newestArmCommandID = status.commandId
         latestArmStatusStampSec = status.stampSec
 
@@ -851,6 +884,7 @@ final class RobotClient: ObservableObject {
             isArmCommandActive = false
             pendingArmActionName = nil
             pendingArmSendStampSec = nil
+            armCommandIDBeforeSend = nil
 
             if ["failed", "rejected"].contains(status.normalizedStatus) {
                 lastError = "Arm command \(status.normalizedStatus): \(status.displayText)"
@@ -860,12 +894,12 @@ final class RobotClient: ObservableObject {
 
         scheduleArmTimeout(
             seconds: AppConfig.armCommandExecutionTimeoutSeconds,
-            message: "Arm status timed out while running \(status.actionName)."
+            message: "Arm status is delayed while running \(status.actionName); controls remain locked until status recovers or you explicitly replace it."
         )
     }
 
-    private func failArmCommandRequest(_ message: String) {
-        guard isArmCommandActive else { return }
+    private func failArmCommandRequest(_ message: String, generation: Int) {
+        guard isArmCommandActive, armCommandGeneration == generation else { return }
 
         armTimeoutTask?.cancel()
         armTimeoutTask = nil
@@ -873,6 +907,7 @@ final class RobotClient: ObservableObject {
         pendingArmActionName = nil
         pendingArmSendStampSec = nil
         activeArmCommandID = nil
+        armCommandIDBeforeSend = nil
         armCommandStatusText = message
     }
 
@@ -895,9 +930,6 @@ final class RobotClient: ObservableObject {
             }
 
             self.armCommandTimedOut = true
-            self.isArmCommandActive = false
-            self.pendingArmActionName = nil
-            self.pendingArmSendStampSec = nil
             self.armCommandStatusText = message
             self.lastError = message
             self.armTimeoutTask = nil
@@ -953,7 +985,7 @@ final class RobotClient: ObservableObject {
         appSourceControlEnabled = false
         appSourceOverrideActive = false
         if isArmCommandActive {
-            armCommandStatusText = "Arm status stream disconnected; waiting for timeout or reconnect."
+            armCommandStatusText = "Arm status stream disconnected; controls remain locked until status recovers."
         }
 
         if updateState {
@@ -987,7 +1019,7 @@ final class RobotClient: ObservableObject {
                     self.appSourceControlEnabled = false
                     self.appSourceOverrideActive = false
                     if self.isArmCommandActive {
-                        self.armCommandStatusText = "Arm status stream disconnected; the command timeout is still active."
+                        self.armCommandStatusText = "Arm status stream disconnected; controls remain locked until status recovers."
                     }
                     self.lastError = "Status stream disconnected. Tap Reconnect. \(error.localizedDescription)"
                     self.webSocketTask = nil

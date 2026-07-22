@@ -98,6 +98,7 @@ BODY_HEIGHT_MIN_METERS = float(
 BODY_HEIGHT_MAX_METERS = float(
     os.getenv("ROBOT_BODY_HEIGHT_MAX_METERS", "0.20")
 )
+ARM_STATUS_HISTORY_LIMIT = 100
 ALLOW_NO_ROS = os.getenv("ROBOT_BRIDGE_ALLOW_NO_ROS", "false").lower() in {
     "1",
     "true",
@@ -261,7 +262,51 @@ class BridgeState:
     latest_command_text: Optional[str] = None
     loop: Optional[asyncio.AbstractEventLoop] = None
     latest_status_by_topic: Dict[str, str] = field(default_factory=dict)
+    arm_status_history: List[str] = field(default_factory=list)
     status_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+
+def remember_status_event(state: BridgeState, topic: str, status_text: str) -> None:
+    with state.status_lock:
+        state.latest_status_text = status_text
+        state.latest_status_by_topic[topic] = status_text
+        if topic == ARM_SKILL_STATUS_TOPIC:
+            state.arm_status_history.append(status_text)
+            overflow = len(state.arm_status_history) - ARM_STATUS_HISTORY_LIMIT
+            if overflow > 0:
+                del state.arm_status_history[:overflow]
+
+
+def build_status_snapshot(
+    latest_status_by_topic: Dict[str, str],
+    arm_status_history: List[str],
+) -> List[str]:
+    status_by_topic = dict(latest_status_by_topic)
+    replay_order = (
+        CONTROL_STATE_TOPIC,
+        TASK_PLANNING_TOPIC,
+        ARM_SKILL_STATUS_TOPIC,
+        CURRENT_SUBTASK_TOPIC,
+        SUBTASK_STATUS_TOPIC,
+        SIM_CONTROL_TOPIC,
+        LEGACY_STATUS_TOPIC,
+        PROMPT_EVIDENCE_TOPIC,
+        IMAGE_EVIDENCE_TOPIC,
+    )
+    status_snapshot: List[str] = []
+
+    for topic in replay_order:
+        if topic == ARM_SKILL_STATUS_TOPIC:
+            latest_arm_status = status_by_topic.pop(topic, None)
+            if arm_status_history:
+                status_snapshot.extend(arm_status_history)
+            elif latest_arm_status is not None:
+                status_snapshot.append(latest_arm_status)
+        elif topic in status_by_topic:
+            status_snapshot.append(status_by_topic.pop(topic))
+
+    status_snapshot.extend(status_by_topic.values())
+    return status_snapshot
 
 
 class WebSocketManager:
@@ -547,9 +592,7 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
         )
 
     def _broadcast_event(self, topic: str, status_text: str) -> None:
-        with self._state.status_lock:
-            self._state.latest_status_text = status_text
-            self._state.latest_status_by_topic[topic] = status_text
+        remember_status_event(self._state, topic, status_text)
 
         if self._state.loop is None:
             self.get_logger().warning("web event loop not ready; dropping status update")
@@ -998,25 +1041,10 @@ async def status_stream(websocket: WebSocket) -> None:
     try:
         with state.status_lock:
             status_by_topic = dict(state.latest_status_by_topic)
+            arm_status_history = list(state.arm_status_history)
             latest_status_text = state.latest_status_text
 
-        replay_order = (
-            CONTROL_STATE_TOPIC,
-            TASK_PLANNING_TOPIC,
-            ARM_SKILL_STATUS_TOPIC,
-            CURRENT_SUBTASK_TOPIC,
-            SUBTASK_STATUS_TOPIC,
-            SIM_CONTROL_TOPIC,
-            LEGACY_STATUS_TOPIC,
-            PROMPT_EVIDENCE_TOPIC,
-            IMAGE_EVIDENCE_TOPIC,
-        )
-        status_snapshot = [
-            status_by_topic.pop(topic)
-            for topic in replay_order
-            if topic in status_by_topic
-        ]
-        status_snapshot.extend(status_by_topic.values())
+        status_snapshot = build_status_snapshot(status_by_topic, arm_status_history)
 
         if status_snapshot:
             for status_text in status_snapshot:
