@@ -120,6 +120,11 @@ ARM_ACTION_COMMANDS = {
         "start_pos": [0.0, 0.0, 0.0],
         "target_pos": [0.0, 0.0, 0.0],
     },
+    "ARM_GRASP_BOTTLE": {
+        "action_name": "grasp_water_bottle",
+        "start_pos": [0.0, 0.0, 0.0],
+        "target_pos": [0.0, 0.0, 0.0],
+    },
 }
 
 
@@ -279,6 +284,11 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
             reliability=ReliabilityPolicy.RELIABLE,
         )
+        arm_subtask_qos = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE,
+        )
         self._task_pub = self.create_publisher(String, TASK_TOPIC, 10)
         self._control_pub = self.create_publisher(String, CONTROL_TOPIC, 10)
         self._current_subtask_pub = self.create_publisher(
@@ -289,7 +299,7 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
         self._current_arm_subtask_pub = self.create_publisher(
             String,
             CURRENT_ARM_SUBTASK_TOPIC,
-            transient_qos,
+            arm_subtask_qos,
         )
         self._human_waypoint_pub = self.create_publisher(PoseStamped, HUMAN_WAYPOINT_TOPIC, 10)
         self._app_robot_mode_pub = self.create_publisher(String, APP_ROBOT_MODE_TOPIC, 10)

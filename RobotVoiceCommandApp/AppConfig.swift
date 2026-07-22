@@ -24,4 +24,5 @@ enum AppConfig {
     static let armRelaxCommand = "ARM_RELAX"
     static let armButtonCommand = "ARM_BUTTON"
     static let armPressCommand = "ARM_PRESS"
+    static let armGraspBottleCommand = "ARM_GRASP_BOTTLE"
 }

@@ -136,12 +136,13 @@ Pause Subtask   sends PAUSE_CURRENT_SUBTASK
 The Jetson bridge forwards these controls on `/task_control` and publishes an
 immediate `/current_subtask` preemption marker for stop/pause commands.
 
-The app also has three fixed arm controls:
+The app also has four fixed arm controls:
 
 ```text
 Relax           sends ARM_RELAX
 Move to Button  sends ARM_BUTTON
 Press Button    sends ARM_PRESS
+Grasp Bottle    sends ARM_GRASP_BOTTLE
 ```
 
 The app receives live mode authority from `/spot/control_state`:
@@ -230,13 +231,23 @@ Fixed arm-action requests use the same endpoint. For example:
 }
 ```
 
-The bridge maps the three command texts to `/current_arm_subtask` payloads:
+The bridge maps the four command texts to `/current_arm_subtask` payloads:
 
 ```text
 ARM_RELAX   -> {"action_name":"move_to_relax","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_BUTTON  -> {"action_name":"move_to_button","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_PRESS   -> {"action_name":"move_to_press","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
+ARM_GRASP_BOTTLE -> {"action_name":"grasp_water_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ```
+
+`ARM_GRASP_BOTTLE` is a one-shot command. The bridge publishes exactly
+`grasp_water_bottle`—never `move_to_grasp`—using reliable, transient-local,
+keep-last depth-1 QoS on `/current_arm_subtask`.
+
+Before tapping **Grasp Bottle**, the wrist camera must see the bottle and
+`/detect_3d_bbox`, `/plan_pose_intu`, `/plan_joint_target`, and the
+`pure_arm_pickup` action server must be running. Tap only once per grasp attempt;
+repeated taps can start additional attempts.
 
 Phone motion controls send:
 

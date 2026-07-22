@@ -493,7 +493,27 @@ struct ContentView: View {
                     .disabled(!canSendControlCommand)
                     .gridCellColumns(2)
                 }
+
+                GridRow {
+                    Button {
+                        sendFixedCommand(AppConfig.armGraspBottleCommand)
+                    } label: {
+                        Label("Grasp Bottle", systemImage: "waterbottle.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.teal)
+                    .disabled(!canSendControlCommand)
+                    .gridCellColumns(2)
+                }
             }
+
+            Label(
+                "Before grasping, put the bottle in the wrist-camera view and start /detect_3d_bbox, /plan_pose_intu, /plan_joint_target, and pure_arm_pickup. Tap once per attempt.",
+                systemImage: "exclamationmark.triangle"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 
