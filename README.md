@@ -136,14 +136,15 @@ Pause Subtask   sends PAUSE_CURRENT_SUBTASK
 The Jetson bridge forwards these controls on `/task_control` and publishes an
 immediate `/current_subtask` preemption marker for stop/pause commands.
 
-The app also has six fixed arm controls:
+The app also has seven fixed arm controls:
 
 ```text
 Relax             sends ARM_RELAX
 Move to Button    sends ARM_BUTTON
 Press Button      sends ARM_PRESS
 Observe Bottle    sends ARM_OBSERVE_BOTTLE
-Detect & Grasp    sends ARM_GRASP_BOTTLE
+Grasp Bottle      sends ARM_GRASP_BOTTLE
+Release Bottle    sends ARM_RELEASE_BOTTLE
 Place Down Bottle sends ARM_PLACE_DOWN_BOTTLE
 ```
 
@@ -233,7 +234,7 @@ Fixed arm-action requests use the same endpoint. For example:
 }
 ```
 
-The bridge maps the six command texts to `/current_arm_subtask` payloads:
+The bridge maps the seven command texts to `/current_arm_subtask` payloads:
 
 ```text
 ARM_RELAX   -> {"action_name":"move_to_relax","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
@@ -241,20 +242,20 @@ ARM_BUTTON  -> {"action_name":"move_to_button","start_pos":[0.0,0.0,0.0],"target
 ARM_PRESS   -> {"action_name":"move_to_press","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_OBSERVE_BOTTLE -> {"action_name":"move_to_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_GRASP_BOTTLE -> {"action_name":"grasp_water_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
+ARM_RELEASE_BOTTLE -> {"action_name":"release_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_PLACE_DOWN_BOTTLE -> {"action_name":"place_down_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ```
 
-The bottle workflow is **Observe Bottle**, **Detect & Grasp**, then
-**Place Down Bottle**. `ARM_OBSERVE_BOTTLE` moves the arm to the bottle
-observation pose. `ARM_GRASP_BOTTLE` publishes exactly `grasp_water_bottle`—never
-`move_to_grasp`. `ARM_PLACE_DOWN_BOTTLE` runs the place, release, retract, and
-return-to-relax sequence.
+`ARM_GRASP_BOTTLE` remains the existing one-shot grasp command and publishes
+exactly `grasp_water_bottle`—never `move_to_grasp`. `ARM_OBSERVE_BOTTLE` moves
+the arm to the bottle observation pose. `ARM_RELEASE_BOTTLE` publishes
+`release_bottle`, while `ARM_PLACE_DOWN_BOTTLE` runs the place-down sequence.
 
 `/current_arm_subtask` uses reliable, transient-local, keep-last depth-1 QoS.
 Each button tap publishes its command once. Wait for the active operation to
-finish before tapping the next step because a new arm command preempts it.
+finish before tapping another because a new arm command preempts it.
 
-Before tapping **Detect & Grasp**, the wrist camera must see the bottle and
+Before tapping **Grasp Bottle**, the wrist camera must see the bottle and
 `/detect_3d_bbox`, `/plan_pose_intu`, `/plan_joint_target`, and the
 `pure_arm_pickup` action server must be running.
 

@@ -508,7 +508,7 @@ struct ContentView: View {
                     Button {
                         sendFixedCommand(AppConfig.armGraspBottleCommand)
                     } label: {
-                        Label("Detect & Grasp", systemImage: "waterbottle.fill")
+                        Label("Grasp Bottle", systemImage: "waterbottle.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -518,6 +518,16 @@ struct ContentView: View {
 
                 GridRow {
                     Button {
+                        sendFixedCommand(AppConfig.armReleaseBottleCommand)
+                    } label: {
+                        Label("Release Bottle", systemImage: "hand.raised.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.teal)
+                    .disabled(!canSendControlCommand)
+
+                    Button {
                         sendFixedCommand(AppConfig.armPlaceDownBottleCommand)
                     } label: {
                         Label("Place Down Bottle", systemImage: "arrow.down.to.line")
@@ -526,12 +536,11 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.teal)
                     .disabled(!canSendControlCommand)
-                    .gridCellColumns(2)
                 }
             }
 
             Label(
-                "Run Observe, Detect & Grasp, then Place Down in order. Tap each step once and wait for it to finish before tapping the next; a new step preempts the active one.",
+                "Observe before grasping. Tap each bottle action once and wait for it to finish before tapping another; a new action preempts the active one.",
                 systemImage: "exclamationmark.triangle"
             )
             .font(.caption)

@@ -37,7 +37,7 @@ The bridge decides what to do:
 - Normal text, for example `find the red fire extinguisher`, is published directly to `/scenario`.
 - `STOP_CURRENT_TASK`, `STOP_CURRENT_SUBTASK`, `PAUSE_CURRENT_SUBTASK`, and `RESUME_CURRENT_SUBTASK` are published to `/task_control`.
 - `ARM_RELAX`, `ARM_BUTTON`, `ARM_PRESS`, `ARM_OBSERVE_BOTTLE`,
-  `ARM_GRASP_BOTTLE`, and `ARM_PLACE_DOWN_BOTTLE` publish fixed action JSON to
+  `ARM_GRASP_BOTTLE`, `ARM_RELEASE_BOTTLE`, and `ARM_PLACE_DOWN_BOTTLE` publish fixed action JSON to
   `/current_arm_subtask`.
 - Stop/pause commands also publish a non-active `/current_subtask` marker so following, VLM guidance, and navigation skills can preempt quickly. They do not stop the persistent exploration module or clear its history.
 
@@ -242,8 +242,8 @@ PAUSE_CURRENT_SUBTASK
 
 Robot-side consumers of `/current_subtask` should handle stop messages as high-priority stop requests and pause messages as subtask pause requests.
 
-The six arm buttons send `ARM_RELAX`, `ARM_BUTTON`, `ARM_PRESS`,
-`ARM_OBSERVE_BOTTLE`, `ARM_GRASP_BOTTLE`, and `ARM_PLACE_DOWN_BOTTLE` through
+The seven arm buttons send `ARM_RELAX`, `ARM_BUTTON`, `ARM_PRESS`,
+`ARM_OBSERVE_BOTTLE`, `ARM_GRASP_BOTTLE`, `ARM_RELEASE_BOTTLE`, and `ARM_PLACE_DOWN_BOTTLE` through
 `/command`. The bridge publishes these payloads:
 
 ```text
@@ -252,20 +252,20 @@ The six arm buttons send `ARM_RELAX`, `ARM_BUTTON`, `ARM_PRESS`,
 {"action_name":"move_to_press","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"move_to_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"grasp_water_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
+{"action_name":"release_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"place_down_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ```
 
-Use the bottle controls in order: `ARM_OBSERVE_BOTTLE` moves to the observation
-pose, `ARM_GRASP_BOTTLE` detects and picks up the bottle, and
-`ARM_PLACE_DOWN_BOTTLE` performs the place-down sequence. The grasp command
-publishes the exact action name `grasp_water_bottle`; `move_to_grasp` is not a
-valid trigger.
+`ARM_GRASP_BOTTLE` remains the existing grasp command and publishes exactly
+`grasp_water_bottle`; `move_to_grasp` is not a valid trigger.
+`ARM_OBSERVE_BOTTLE` moves to the observation pose. `ARM_RELEASE_BOTTLE` publishes
+`release_bottle`, while `ARM_PLACE_DOWN_BOTTLE` performs the place-down sequence.
 
 `/current_arm_subtask` uses reliable, transient-local, keep-last depth-1 QoS.
 Each tap publishes once. Wait for the current operation to finish before tapping
-the next button because a newly published arm command preempts the active one.
+another button because a newly published arm command preempts the active one.
 
-Before dispatching the grasp command, place the bottle in the wrist-camera view
+Before dispatching **Grasp Bottle**, place the bottle in the wrist-camera view
 and ensure `/detect_3d_bbox`, `/plan_pose_intu`, `/plan_joint_target`, and the
 `pure_arm_pickup` action server are running.
 

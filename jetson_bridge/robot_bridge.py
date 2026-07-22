@@ -130,6 +130,11 @@ ARM_ACTION_COMMANDS = {
         "start_pos": [0.0, 0.0, 0.0],
         "target_pos": [0.0, 0.0, 0.0],
     },
+    "ARM_RELEASE_BOTTLE": {
+        "action_name": "release_bottle",
+        "start_pos": [0.0, 0.0, 0.0],
+        "target_pos": [0.0, 0.0, 0.0],
+    },
     "ARM_PLACE_DOWN_BOTTLE": {
         "action_name": "place_down_bottle",
         "start_pos": [0.0, 0.0, 0.0],
