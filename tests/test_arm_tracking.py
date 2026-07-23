@@ -253,6 +253,7 @@ class SwiftArmTrackingSourceTests(unittest.TestCase):
         self.assertIn("func stopPlatform", self.source)
         self.assertIn('Label("Start Platform"', self.content_source)
         self.assertIn('Label("Stop Platform"', self.content_source)
+        self.assertIn('.alert("Start SAIR_platform?"', self.content_source)
         self.assertIn('.alert("Stop SAIR_platform?"', self.content_source)
 
     def test_arm_response_callback_checks_generation_before_handling_result(self):

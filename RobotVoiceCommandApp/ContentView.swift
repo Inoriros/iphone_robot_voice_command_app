@@ -47,6 +47,7 @@ struct ContentView: View {
     @State private var selectedWaypointY = 0.0
     @State private var selectedBodyHeightMeters = 0.0
     @State private var allowNextArmCommandToPreempt = false
+    @State private var showingStartPlatformConfirmation = false
     @State private var showingStopPlatformConfirmation = false
     @AppStorage("manualControlAxisRangeMeters") private var waypointRangeMeters =
         AppConfig.defaultManualControlAxisRangeMeters
@@ -262,7 +263,7 @@ struct ContentView: View {
 
                 HStack(spacing: 12) {
                     Button {
-                        robot.startPlatform(ip: jetsonIP, token: token)
+                        showingStartPlatformConfirmation = true
                     } label: {
                         Label("Start Platform", systemImage: "play.fill")
                             .frame(maxWidth: .infinity)
@@ -270,6 +271,17 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.green)
                     .disabled(!canControlPlatform || robot.platformRunning == true)
+                    .alert("Start SAIR_platform?", isPresented: $showingStartPlatformConfirmation) {
+                        Button("Cancel", role: .cancel) {}
+                        Button("Start Platform") {
+                            robot.startPlatform(ip: jetsonIP, token: token)
+                        }
+                    } message: {
+                        Text(
+                            "This launches the robot ROS stack in the dedicated "
+                                + "sair_platform tmux session."
+                        )
+                    }
 
                     Button(role: .destructive) {
                         showingStopPlatformConfirmation = true
