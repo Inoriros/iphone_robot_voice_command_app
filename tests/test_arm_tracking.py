@@ -4,6 +4,7 @@ import json
 import sys
 import types
 import unittest
+from functools import lru_cache
 from pathlib import Path
 from unittest.mock import AsyncMock, call, patch
 
@@ -11,6 +12,7 @@ from unittest.mock import AsyncMock, call, patch
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@lru_cache(maxsize=1)
 def load_bridge_module():
     fastapi = types.ModuleType("fastapi")
 
@@ -121,6 +123,9 @@ class BridgeRosbagControlTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.bridge = load_bridge_module()
+
+    def test_bridge_test_module_is_reused_between_test_classes(self):
+        self.assertIs(self.bridge, load_bridge_module())
 
     def test_rosbag_services_match_host_manager(self):
         self.assertEqual(
