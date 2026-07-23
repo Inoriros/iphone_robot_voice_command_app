@@ -129,10 +129,15 @@ class BridgePlatformControlTests(unittest.TestCase):
             patch.object(self.bridge, "platform_tmux_session_exists", session_exists),
             patch.object(self.bridge, "run_tmux_command", run_tmux),
             patch.object(self.bridge.asyncio, "sleep", AsyncMock()),
+            patch.object(
+                self.bridge,
+                "validate_platform_start_configuration",
+            ) as validate_configuration,
         ):
             started = asyncio.run(self.bridge.start_platform_session())
 
         self.assertTrue(started)
+        validate_configuration.assert_called_once_with()
         run_tmux.assert_awaited_once_with(
             "new-session",
             "-d",
