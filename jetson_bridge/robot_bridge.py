@@ -29,6 +29,7 @@ try:
     from geometry_msgs.msg import PoseStamped, Twist
     from sensor_msgs.msg import CompressedImage
     from std_msgs.msg import Float32, String
+    from std_srvs.srv import Trigger
 
     ROS_AVAILABLE = True
 except ImportError:
@@ -43,6 +44,7 @@ except ImportError:
     CompressedImage = None
     Float32 = None
     String = None
+    Trigger = None
     ROS_AVAILABLE = False
 
 
@@ -82,6 +84,34 @@ IMAGE_EVIDENCE_TOPIC = os.getenv(
 )
 SIM_CONTROL_TOPIC = os.getenv("ROBOT_SIM_CONTROL_TOPIC", "/sim_control")
 LEGACY_STATUS_TOPIC = os.getenv("ROBOT_STATUS_TOPIC", "/task_status")
+ROSBAG_STATUS_TOPIC = os.getenv(
+    "ROBOT_ROSBAG_STATUS_TOPIC",
+    "/sair/rosbag/status",
+)
+ROSBAG_START_SERVICE = os.getenv("ROBOT_ROSBAG_START_SERVICE", "/sair/rosbag/start")
+ROSBAG_STOP_SERVICE = os.getenv("ROBOT_ROSBAG_STOP_SERVICE", "/sair/rosbag/stop")
+ROSBAG_DELETE_LATEST_SERVICE = os.getenv(
+    "ROBOT_ROSBAG_DELETE_LATEST_SERVICE",
+    "/sair/rosbag/delete_latest",
+)
+ROSBAG_STATUS_SERVICE = os.getenv(
+    "ROBOT_ROSBAG_STATUS_SERVICE",
+    "/sair/rosbag/get_status",
+)
+ROSBAG_SERVICES = {
+    "start": ROSBAG_START_SERVICE,
+    "stop": ROSBAG_STOP_SERVICE,
+    "delete_latest": ROSBAG_DELETE_LATEST_SERVICE,
+    "status": ROSBAG_STATUS_SERVICE,
+}
+ROSBAG_DISCOVERY_TIMEOUT_SECONDS = max(
+    0.1,
+    float(os.getenv("ROBOT_ROSBAG_DISCOVERY_TIMEOUT_SECONDS", "3")),
+)
+ROSBAG_RESPONSE_TIMEOUT_SECONDS = max(
+    1.0,
+    float(os.getenv("ROBOT_ROSBAG_RESPONSE_TIMEOUT_SECONDS", "60")),
+)
 AUTH_TOKEN = os.getenv("ROBOT_BRIDGE_TOKEN", "2001")
 BATTERY_CHECK_SCRIPT = os.getenv(
     "SPOT_BATTERY_CHECK_SCRIPT",
@@ -215,6 +245,18 @@ class PlatformControlResponse(BaseModel):
     action: Literal["start", "stop"]
     running: bool
     session: str
+    message: str
+
+
+class RosbagControlRequest(BaseModel):
+    token: str
+    source: str = "iphone"
+
+
+class RosbagControlResponse(BaseModel):
+    ok: bool
+    action: Literal["start", "stop", "delete_latest", "status"]
+    service: str
     message: str
 
 
@@ -427,6 +469,10 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
         self._human_velocity_pub = self.create_publisher(Twist, HUMAN_VELOCITY_TOPIC, 10)
 
         self._human_body_height_pub = self.create_publisher(Float32, HUMAN_BODY_HEIGHT_TOPIC, 10)
+        self._rosbag_clients = {
+            action: self.create_client(Trigger, service_name)
+            for action, service_name in ROSBAG_SERVICES.items()
+        }
         for topic in dict.fromkeys(
             [
                 SUBTASK_STATUS_TOPIC,
@@ -446,6 +492,7 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
                 CONTROL_STATE_TOPIC,
                 TASK_PLANNING_TOPIC,
                 PROMPT_EVIDENCE_TOPIC,
+                ROSBAG_STATUS_TOPIC,
             ]
         ):
             self.create_subscription(
@@ -479,8 +526,20 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             f"status <- {CURRENT_SUBTASK_TOPIC}, {SUBTASK_STATUS_TOPIC}, "
             f"{ARM_SKILL_STATUS_TOPIC}, {TASK_PLANNING_TOPIC}, "
             f"{PROMPT_EVIDENCE_TOPIC}, "
-            f"{IMAGE_EVIDENCE_TOPIC}, {SIM_CONTROL_TOPIC}"
+            f"{IMAGE_EVIDENCE_TOPIC}, {SIM_CONTROL_TOPIC}, "
+            f"{ROSBAG_STATUS_TOPIC}"
         )
+
+        self.get_logger().info(
+            "rosbag Trigger services -> "
+            + ", ".join(ROSBAG_SERVICES.values())
+        )
+
+    def rosbag_client(self, action: str) -> Any:
+        try:
+            return self._rosbag_clients[action]
+        except KeyError as exc:
+            raise ValueError(f"unsupported rosbag action: {action}") from exc
 
     def publish_task(self, command_text: str, source: str) -> None:
         message = String()
@@ -669,6 +728,8 @@ class RobotBridgeNode(Node):  # type: ignore[misc]
             payload["type"] = "prompt_evidence"
         elif topic == SIM_CONTROL_TOPIC:
             payload["type"] = "task_lifecycle"
+        elif topic == ROSBAG_STATUS_TOPIC:
+            payload["type"] = "rosbag_status"
         else:
             payload["type"] = "status"
 
@@ -810,6 +871,101 @@ async def read_spot_battery_percentage() -> float:
             status_code=502,
             detail="Spot returned an unreadable battery level.",
         ) from exc
+
+
+class RosbagServiceRejected(RuntimeError):
+    pass
+
+
+rosbag_control_lock = asyncio.Lock()
+
+
+async def call_rosbag_trigger(action: str) -> str:
+    if action not in ROSBAG_SERVICES:
+        raise ValueError(f"unsupported rosbag action: {action}")
+    if ros_node is None or Trigger is None:
+        raise RuntimeError("ROS 2 bridge is not available")
+
+    service_name = ROSBAG_SERVICES[action]
+    client = ros_node.rosbag_client(action)
+    loop = asyncio.get_running_loop()
+    discovery_deadline = loop.time() + ROSBAG_DISCOVERY_TIMEOUT_SECONDS
+    while not client.service_is_ready():
+        if loop.time() >= discovery_deadline:
+            raise RuntimeError(
+                f"host rosbag service is unavailable: {service_name}"
+            )
+        await asyncio.sleep(0.1)
+
+    try:
+        future = client.call_async(Trigger.Request())
+    except Exception as exc:
+        raise RuntimeError(
+            f"could not call host rosbag service: {service_name}"
+        ) from exc
+
+    response_deadline = loop.time() + ROSBAG_RESPONSE_TIMEOUT_SECONDS
+    while not future.done():
+        if loop.time() >= response_deadline:
+            future.cancel()
+            raise TimeoutError(
+                f"host rosbag service timed out: {service_name}"
+            )
+        await asyncio.sleep(0.05)
+
+    try:
+        response = future.result()
+    except Exception as exc:
+        raise RuntimeError(
+            f"host rosbag service failed: {service_name}"
+        ) from exc
+    if response is None:
+        raise RuntimeError(
+            f"host rosbag service returned no response: {service_name}"
+        )
+
+    message = str(response.message).strip()
+    if not bool(response.success):
+        raise RosbagServiceRejected(
+            message or f"host rosbag manager rejected {action}"
+        )
+    return message or f"Rosbag {action} succeeded."
+
+
+async def handle_rosbag_control(
+    action: Literal["start", "stop", "delete_latest", "status"],
+    request: RosbagControlRequest,
+) -> RosbagControlResponse:
+    if request.token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    service_name = ROSBAG_SERVICES[action]
+    async with rosbag_control_lock:
+        try:
+            message = await call_rosbag_trigger(action)
+        except RosbagServiceRejected as exc:
+            logger.warning("rosbag manager rejected %s: %s", action, exc)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except TimeoutError as exc:
+            logger.error("rosbag manager timed out for %s: %s", action, exc)
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            logger.error("rosbag service error for %s: %s", action, exc)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    logger.info(
+        "rosbag %s completed through %s for %s: %s",
+        action,
+        service_name,
+        request.source,
+        message,
+    )
+    return RosbagControlResponse(
+        ok=True,
+        action=action,
+        service=service_name,
+        message=message,
+    )
 
 
 platform_control_lock = asyncio.Lock()
@@ -956,6 +1112,8 @@ async def health() -> Dict[str, Any]:
         "platform_directory": PLATFORM_DIRECTORY,
         "platform_start_script": PLATFORM_START_SCRIPT,
         "platform_tmux_session": PLATFORM_TMUX_SESSION,
+        "rosbag_services": dict(ROSBAG_SERVICES),
+        "rosbag_status_topic": ROSBAG_STATUS_TOPIC,
         "subtask_status_topic": SUBTASK_STATUS_TOPIC,
         "task_planning_topic": TASK_PLANNING_TOPIC,
         "human_body_height_topic": HUMAN_BODY_HEIGHT_TOPIC,
@@ -1263,6 +1421,28 @@ async def platform_stop(request: PlatformControlRequest) -> PlatformControlRespo
         session=PLATFORM_TMUX_SESSION,
         message=message,
     )
+
+
+@app.post("/rosbag/start", response_model=RosbagControlResponse)
+async def rosbag_start(request: RosbagControlRequest) -> RosbagControlResponse:
+    return await handle_rosbag_control("start", request)
+
+
+@app.post("/rosbag/stop", response_model=RosbagControlResponse)
+async def rosbag_stop(request: RosbagControlRequest) -> RosbagControlResponse:
+    return await handle_rosbag_control("stop", request)
+
+
+@app.post("/rosbag/delete_latest", response_model=RosbagControlResponse)
+async def rosbag_delete_latest(
+    request: RosbagControlRequest,
+) -> RosbagControlResponse:
+    return await handle_rosbag_control("delete_latest", request)
+
+
+@app.post("/rosbag/status", response_model=RosbagControlResponse)
+async def rosbag_status(request: RosbagControlRequest) -> RosbagControlResponse:
+    return await handle_rosbag_control("status", request)
 
 
 @app.websocket("/status")

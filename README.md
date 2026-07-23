@@ -18,6 +18,10 @@ Jetson bridge
   - FastAPI POST /battery
   - FastAPI POST /platform/start
   - FastAPI POST /platform/stop
+  - FastAPI POST /rosbag/start
+  - FastAPI POST /rosbag/stop
+  - FastAPI POST /rosbag/delete_latest
+  - FastAPI POST /rosbag/status
   - FastAPI POST /manual_control
   - FastAPI POST /manual_velocity
   - FastAPI POST /body_height
@@ -26,7 +30,8 @@ Jetson bridge
   - FastAPI WebSocket /status
   - ROS 2 publishers: /scenario, /task_control, /current_arm_subtask, /human_way_point,
     /human_velocity_command, /human_body_height, /spot/app_robot_mode, and /spot/app_control_source
-  - ROS 2 subscribers: task status, /arm_skill_status, /task_planning, and reasoning evidence
+  - ROS 2 subscribers: task status, /arm_skill_status, /task_planning,
+    /sair/rosbag/status, and reasoning evidence
 ```
 
 ## Repository Layout
@@ -98,6 +103,7 @@ Use your actual ROS 2 distro path if it is not Humble.
 Start the bridge:
 
 ```bash
+export RMW_IMPLEMENTATION="rmw_cyclonedds_cpp"
 export ROBOT_BRIDGE_TOKEN="2001"
 python3 robot_bridge.py
 ```
@@ -119,12 +125,18 @@ The iPhone app should use the Jetson's Wi-Fi IP address, for example:
 1. Enter the Jetson IP address.
 2. Enter the auth token. It must match `ROBOT_BRIDGE_TOKEN` on the Jetson.
 3. Tap **Connect** to open the status WebSocket.
-4. Tap **Check Battery** at any time to show Spot's current battery percentage.
-5. Tap **Start Platform** to launch SAIR_platform in its dedicated tmux session.
+4. Expand **Spot Base Functions** for battery, SAIR platform, and rosbag
+   controls. Rosbag deletion requires confirmation.
+5. Expand **Task Functions** for task status, voice commands, plans, proof, and
+   task/subtask controls.
 6. Tap **Start Listening** and speak a high-level robot command.
 7. Tap **Stop Listening**.
 8. Edit or verify the recognized text.
 9. Tap **Send**.
+
+Both function groups start collapsed. Collapsing **Task Functions** stops an
+active microphone session. Robot Arm controls remain visible under **Phone
+Robot Control**, immediately below **Standing Height**.
 
 The app never auto-sends partial speech recognition results. Commands are only sent after the user taps **Send**.
 
@@ -168,13 +180,14 @@ The app receives live mode authority from `/spot/control_state`:
 
 - **Standing Height:** select an offset from -20 cm to +20 cm and tap **Apply
   Height**; **Nominal** resets the offset to zero.
-- **Direct Rotation:** press and hold **Left** or **Right**; release to stop.
-- **Direct Movement:** press and hold an arrow; release to stop.
 - **Drive Joystick:** choose a persistent 100%–200% maximum throttle, then drag
   vertically for forward/reverse and horizontally for steering. The default is
   150%, and diagonal drag makes Spot move and rotate simultaneously.
-- **Body-Relative Waypoint:** choose a range from 2–6 m, then tap the square
-  panel. Its fixed center arrow is Spot, up is forward, and left is Spot's left.
+- **Direct Movement:** press and hold an arrow to move at 0.3 m/s; release to stop.
+- **Direct Rotation:** press and hold **Left** or **Right**; release to stop.
+- **Body-Relative Waypoint:** expand its row, choose a range from 2–6 m, then
+  tap the square panel. Its fixed center arrow is Spot, up is forward, and left
+  is Spot's left.
   The target yaw follows the center-to-target line.
 
 The bridge publishes direct motion as `Twist` messages on
@@ -186,6 +199,34 @@ covers 0.5–1.0 m/s and its initial 150% setting produces 0.75 m/s. Release pub
 zero velocity, and the Spot controller also stops after 0.35 seconds without a
 refresh. While SBUS is connected in
 SBUS + WALK, moving any physical stick cancels phone motion immediately.
+
+## Host Rosbag Manager
+
+The app calls authenticated bridge routes, and the bridge calls these host ROS 2
+`std_srvs/srv/Trigger` services once per button tap:
+
+```text
+/sair/rosbag/start
+/sair/rosbag/stop
+/sair/rosbag/delete_latest
+/sair/rosbag/get_status
+```
+
+Run `sair_rosbag_manager` through systemd as `zitongzhan` on the Jetson host,
+not inside the bridge container. The host process launches
+`/home/zitongzhan/sair_nav_record_raw.sh`, so recordings remain under
+`/home/zitongzhan/bags/spot_nav_*`; no Docker volume mount is required when the
+container uses host networking. The bridge uses CycloneDDS to match the manager.
+
+The bridge also subscribes to the reliable, transient-local
+`/sair/rosbag/status` `std_msgs/msg/String` topic. The app requests status when
+**Connect** is tapped, then receives live state changes through its existing
+WebSocket and displays the state, bag, path, PID, duration, exit code, or error.
+
+The original interface notes called the status service `/sair/rosbag/status`,
+but the running host advertises `/sair/rosbag/get_status`. Override any service
+name with the bridge environment variables documented in
+`jetson_bridge/README.md` if the host configuration changes.
 
 ## Network API
 

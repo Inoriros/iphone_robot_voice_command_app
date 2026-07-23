@@ -8,6 +8,10 @@ It exposes:
 - `POST /battery` for authenticated Spot battery checks.
 - `POST /platform/start` to launch SAIR_platform in a dedicated tmux session.
 - `POST /platform/stop` to stop that dedicated platform session.
+- `POST /rosbag/start` to start host-side rosbag recording.
+- `POST /rosbag/stop` to stop host-side rosbag recording.
+- `POST /rosbag/delete_latest` to delete the latest host-side recording.
+- `POST /rosbag/status` to read the host rosbag manager status.
 - `POST /manual_control` for authenticated body-relative phone motion goals.
 - `POST /manual_velocity` for authenticated press-and-hold velocity refreshes.
 - `POST /body_height` for authenticated standing-height offsets.
@@ -25,7 +29,8 @@ It exposes:
 - ROS 2 publisher: `/spot/app_control_source` as `std_msgs/msg/String`.
 - ROS 2 status subscribers: `/spot/control_state`, `/current_subtask`,
   `/subtask_status`, `/arm_skill_status`, `/task_planning`,
-  `/subtask_prompt_evidance`, `/subtask_image_evidence`, `/sim_control`, plus optional `/task_status`.
+  `/subtask_prompt_evidance`, `/subtask_image_evidence`, `/sim_control`,
+  `/sair/rosbag/status`, plus optional `/task_status`.
 
 ## How It Connects To The Robot
 
@@ -159,6 +164,60 @@ export SAIR_PLATFORM_TMUX_SESSION="sair_platform"
 export SAIR_PLATFORM_STOP_TIMEOUT_SECONDS="8"
 ```
 
+## Host Rosbag Manager
+
+The bridge is only a ROS 2 service client. By default, its authenticated HTTP
+routes call these `std_srvs/srv/Trigger` services:
+
+```text
+POST /rosbag/start         -> /sair/rosbag/start
+POST /rosbag/stop          -> /sair/rosbag/stop
+POST /rosbag/delete_latest -> /sair/rosbag/delete_latest
+POST /rosbag/status        -> /sair/rosbag/get_status
+```
+
+Run `sair_rosbag_manager` through systemd as `zitongzhan` on the Jetson host,
+not inside the container. The host manager launches
+`/home/zitongzhan/sair_nav_record_raw.sh` and therefore writes directly to
+`/home/zitongzhan/bags/spot_nav_*`. With host networking, DDS connects the
+containerized bridge to those services and no filesystem mount is required.
+
+The installed host unit is `sair-rosbag-manager.service`. Check it and follow
+its logs on the host with:
+
+```bash
+systemctl status sair-rosbag-manager.service
+journalctl -u sair-rosbag-manager.service -f
+```
+
+The bridge also subscribes to `/sair/rosbag/status` as
+`std_msgs/msg/String` with reliable, transient-local QoS. It forwards the
+manager's retained JSON and subsequent state changes over the existing app
+WebSocket. The app formats recording state, bag name/path, PID, duration, exit
+code, and errors into a readable summary rather than showing raw JSON.
+
+All four HTTP routes accept the normal authenticated body:
+
+```json
+{"token":"2001","source":"iphone"}
+```
+
+The service names and timeouts can be overridden before starting the bridge:
+
+```bash
+export ROBOT_ROSBAG_START_SERVICE="/sair/rosbag/start"
+export ROBOT_ROSBAG_STOP_SERVICE="/sair/rosbag/stop"
+export ROBOT_ROSBAG_DELETE_LATEST_SERVICE="/sair/rosbag/delete_latest"
+export ROBOT_ROSBAG_STATUS_SERVICE="/sair/rosbag/get_status"
+export ROBOT_ROSBAG_STATUS_TOPIC="/sair/rosbag/status"
+export ROBOT_ROSBAG_DISCOVERY_TIMEOUT_SECONDS="3"
+export ROBOT_ROSBAG_RESPONSE_TIMEOUT_SECONDS="60"
+```
+
+The bridge returns `503` when the host service is unavailable, `504` on a
+response timeout, and `409` when the host manager rejects an operation. The
+delete control is never issued automatically; the app requires confirmation.
+
 The task planner listens to `/task_control`:
 
 - `STOP_CURRENT_TASK`: cancel the whole active plan and set the coordinator idle.
@@ -212,6 +271,7 @@ Use your installed ROS 2 distro path if it is not Humble.
 ## Run
 
 ```bash
+export RMW_IMPLEMENTATION="rmw_cyclonedds_cpp"
 export ROBOT_BRIDGE_TOKEN="2001"
 python3 robot_bridge.py
 ```

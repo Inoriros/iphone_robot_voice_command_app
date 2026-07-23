@@ -91,6 +91,99 @@ struct PlatformControlResponse: Codable {
     let message: String
 }
 
+struct RosbagControlRequest: Codable {
+    let token: String
+    let source: String
+}
+
+struct RosbagControlResponse: Codable {
+    let ok: Bool
+    let action: String
+    let service: String
+    let message: String
+
+    var decodedStatus: RosbagStatus? {
+        guard let data = message.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(RosbagStatus.self, from: data)
+    }
+}
+
+struct RosbagStatus: Codable {
+    let ok: Bool?
+    let state: String?
+    let recording: Bool?
+    let bagName: String?
+    let bagPath: String?
+    let pid: Int?
+    let startedAt: Double?
+    let durationSeconds: Double?
+    let lastBagName: String?
+    let lastExitCode: Int?
+    let message: String?
+    let error: String?
+    let lastError: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case state
+        case recording
+        case bagName = "bag_name"
+        case bagPath = "bag_path"
+        case pid
+        case startedAt = "started_at"
+        case durationSeconds = "duration_seconds"
+        case lastBagName = "last_bag_name"
+        case lastExitCode = "last_exit_code"
+        case message
+        case error
+        case lastError = "last_error"
+    }
+
+    var displayText: String {
+        var summary: [String] = []
+
+        if let state, !state.isEmpty {
+            summary.append(state.replacingOccurrences(of: "_", with: " ").capitalized)
+        } else if recording == true {
+            summary.append("Recording")
+        } else if recording == false {
+            summary.append("Stopped")
+        }
+
+        if let name = bagName ?? (recording == false ? lastBagName : nil),
+           !name.isEmpty {
+            summary.append(name)
+        }
+        if let durationSeconds, durationSeconds > 0 {
+            summary.append(Self.formattedDuration(durationSeconds))
+        }
+        if recording == true, let pid {
+            summary.append("PID \(pid)")
+        }
+        if recording == false, let lastExitCode {
+            summary.append("Exit \(lastExitCode)")
+        }
+
+        var lines = [summary.isEmpty ? "Rosbag status received" : summary.joined(separator: " • ")]
+        if let bagPath, !bagPath.isEmpty {
+            lines.append(bagPath)
+        }
+        if let errorText = error ?? lastError, !errorText.isEmpty {
+            lines.append("Error: \(errorText)")
+        } else if let message, !message.isEmpty {
+            lines.append(message)
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func formattedDuration(_ seconds: Double) -> String {
+        let totalSeconds = max(0, Int(seconds.rounded()))
+        let minutes = totalSeconds / 60
+        let remainingSeconds = totalSeconds % 60
+        return minutes > 0 ? "\(minutes)m \(remainingSeconds)s" : "\(remainingSeconds)s"
+    }
+}
+
 struct ManualControlRequest: Codable {
     let x: Double
     let y: Double

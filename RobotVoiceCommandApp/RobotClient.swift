@@ -24,6 +24,8 @@ final class RobotClient: ObservableObject {
     @Published var platformRunning: Bool?
     @Published var platformMessage: String?
     @Published var isChangingPlatformState = false
+    @Published var rosbagMessage: String?
+    @Published var isSendingRosbagCommand = false
     @Published var controlSource = "unknown"
     @Published var physicalControlSource = "unknown"
     @Published var robotMode = "unknown"
@@ -383,6 +385,98 @@ final class RobotClient: ObservableObject {
                     } else {
                         let action = start ? "starting" : "stopping"
                         self.lastError = "Jetson returned HTTP \(httpResponse.statusCode) while \(action) SAIR_platform."
+                    }
+                }
+            }
+        }.resume()
+    }
+
+    func startRosbagRecording(ip: String, token: String) {
+        sendRosbagControl(ip: ip, token: token, action: "start")
+    }
+
+    func stopRosbagRecording(ip: String, token: String) {
+        sendRosbagControl(ip: ip, token: token, action: "stop")
+    }
+
+    func deleteLatestRosbag(ip: String, token: String) {
+        sendRosbagControl(ip: ip, token: token, action: "delete_latest")
+    }
+
+    func refreshRosbagStatus(ip: String, token: String) {
+        sendRosbagControl(ip: ip, token: token, action: "status")
+    }
+
+    private func sendRosbagControl(ip: String, token: String, action: String) {
+        guard !isSendingRosbagCommand else { return }
+
+        let trimmedIP = normalizedHost(from: ip)
+        lastError = nil
+        rosbagMessage = nil
+
+        guard !trimmedIP.isEmpty else {
+            lastError = "Jetson IP is required."
+            return
+        }
+
+        guard let url = rosbagControlURL(ip: trimmedIP, action: action) else {
+            lastError = "Invalid rosbag operation."
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 65
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            let body = RosbagControlRequest(
+                token: token,
+                source: AppConfig.commandSource
+            )
+            request.httpBody = try jsonEncoder.encode(body)
+        } catch {
+            lastError = "Could not encode rosbag request: \(error.localizedDescription)"
+            return
+        }
+
+        isSendingRosbagCommand = true
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isSendingRosbagCommand = false
+
+                if let error {
+                    self.lastError = "Cannot reach Jetson at \(trimmedIP):\(AppConfig.defaultPort). \(error.localizedDescription)"
+                    return
+                }
+
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    self.lastError = "Jetson returned an invalid rosbag response."
+                    return
+                }
+
+                switch httpResponse.statusCode {
+                case 200:
+                    guard let data,
+                          let response = try? self.jsonDecoder.decode(
+                              RosbagControlResponse.self,
+                              from: data
+                          ),
+                          response.ok else {
+                        self.lastError = "Jetson returned an unreadable rosbag response."
+                        return
+                    }
+                    self.rosbagMessage = response.decodedStatus?.displayText
+                        ?? response.message
+                case 401:
+                    self.lastError = "Invalid token. Please check the token on the Jetson bridge."
+                default:
+                    if let detail = self.bridgeErrorDetail(from: data) {
+                        self.lastError = detail
+                    } else {
+                        let operation = action.replacingOccurrences(of: "_", with: " ")
+                        self.lastError = "Jetson returned HTTP \(httpResponse.statusCode) for rosbag \(operation)."
                     }
                 }
             }
@@ -1173,6 +1267,14 @@ final class RobotClient: ObservableObject {
                     lastError = "Received an unreadable arm skill status."
                 }
                 return
+            case "rosbag_status":
+                if let nestedData = encodedJSON(eventData),
+                   let status = try? jsonDecoder.decode(RosbagStatus.self, from: nestedData) {
+                    rosbagMessage = status.displayText
+                } else {
+                    lastError = "Received an unreadable rosbag status."
+                }
+                return
             case "control_state":
                 if let controlState = eventData as? [String: Any] {
                     controlSource = controlState["source"] as? String ?? "unknown"
@@ -1252,6 +1354,23 @@ final class RobotClient: ObservableObject {
 
     private func platformControlURL(ip: String, start: Bool) -> URL? {
         let path = start ? AppConfig.platformStartPath : AppConfig.platformStopPath
+        return URL(string: "http://\(ip):\(AppConfig.defaultPort)\(path)")
+    }
+
+    private func rosbagControlURL(ip: String, action: String) -> URL? {
+        let path: String
+        switch action {
+        case "start":
+            path = AppConfig.rosbagStartPath
+        case "stop":
+            path = AppConfig.rosbagStopPath
+        case "delete_latest":
+            path = AppConfig.rosbagDeleteLatestPath
+        case "status":
+            path = AppConfig.rosbagStatusPath
+        default:
+            return nil
+        }
         return URL(string: "http://\(ip):\(AppConfig.defaultPort)\(path)")
     }
 

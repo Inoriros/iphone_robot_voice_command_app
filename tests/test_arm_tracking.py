@@ -1,5 +1,6 @@
 import asyncio
 import importlib.util
+import json
 import sys
 import types
 import unittest
@@ -114,6 +115,84 @@ class BridgeArmHistoryTests(unittest.TestCase):
                 "target_pos": [0.0, 0.0, 0.0],
             },
         )
+
+
+class BridgeRosbagControlTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.bridge = load_bridge_module()
+
+    def test_rosbag_services_match_host_manager(self):
+        self.assertEqual(
+            self.bridge.ROSBAG_SERVICES,
+            {
+                "start": "/sair/rosbag/start",
+                "stop": "/sair/rosbag/stop",
+                "delete_latest": "/sair/rosbag/delete_latest",
+                "status": "/sair/rosbag/get_status",
+            },
+        )
+        self.assertEqual(
+            self.bridge.ROSBAG_STATUS_TOPIC,
+            "/sair/rosbag/status",
+        )
+
+    def test_rosbag_status_topic_uses_dedicated_websocket_event(self):
+        payload = json.loads(
+            self.bridge.RobotBridgeNode._status_payload(
+                self.bridge.ROSBAG_STATUS_TOPIC,
+                '{"recording":true,"state":"recording"}',
+            )
+        )
+        self.assertEqual(payload["type"], "rosbag_status")
+        self.assertTrue(payload["data"]["recording"])
+
+    def test_rosbag_trigger_returns_host_manager_message(self):
+        response = types.SimpleNamespace(success=True, message="Recording started")
+        future = types.SimpleNamespace(
+            done=lambda: True,
+            result=lambda: response,
+        )
+        client = types.SimpleNamespace(
+            service_is_ready=lambda: True,
+            call_async=lambda request: future,
+        )
+        node = types.SimpleNamespace(rosbag_client=lambda action: client)
+        trigger = types.SimpleNamespace(Request=object)
+
+        with (
+            patch.object(self.bridge, "ros_node", node),
+            patch.object(self.bridge, "Trigger", trigger),
+        ):
+            message = asyncio.run(self.bridge.call_rosbag_trigger("start"))
+
+        self.assertEqual(message, "Recording started")
+
+    def test_rosbag_trigger_preserves_manager_rejection(self):
+        response = types.SimpleNamespace(
+            success=False,
+            message="No rosbag recording is active",
+        )
+        future = types.SimpleNamespace(
+            done=lambda: True,
+            result=lambda: response,
+        )
+        client = types.SimpleNamespace(
+            service_is_ready=lambda: True,
+            call_async=lambda request: future,
+        )
+        node = types.SimpleNamespace(rosbag_client=lambda action: client)
+        trigger = types.SimpleNamespace(Request=object)
+
+        with (
+            patch.object(self.bridge, "ros_node", node),
+            patch.object(self.bridge, "Trigger", trigger),
+        ):
+            with self.assertRaisesRegex(
+                self.bridge.RosbagServiceRejected,
+                "No rosbag recording is active",
+            ):
+                asyncio.run(self.bridge.call_rosbag_trigger("stop"))
 
 
 class BridgePlatformControlTests(unittest.TestCase):
@@ -255,6 +334,96 @@ class SwiftArmTrackingSourceTests(unittest.TestCase):
         self.assertIn('Label("Stop Platform"', self.content_source)
         self.assertIn('.alert("Start SAIR_platform?"', self.content_source)
         self.assertIn('.alert("Stop SAIR_platform?"', self.content_source)
+
+    def test_rosbag_buttons_use_authenticated_bridge_routes(self):
+        self.assertIn('rosbagStartPath = "/rosbag/start"', self.config_source)
+        self.assertIn('rosbagStopPath = "/rosbag/stop"', self.config_source)
+        self.assertIn(
+            'rosbagDeleteLatestPath = "/rosbag/delete_latest"',
+            self.config_source,
+        )
+        self.assertIn("RosbagControlRequest", self.models_source)
+        self.assertIn('Label("Start Recording"', self.content_source)
+        self.assertIn('Label("Stop Recording"', self.content_source)
+        self.assertIn('Label("Delete Latest Recording"', self.content_source)
+        self.assertIn('"Delete latest rosbag?"', self.content_source)
+        self.assertIn("robot.refreshRosbagStatus", self.content_source)
+        self.assertIn('case "rosbag_status"', self.source)
+        self.assertIn("struct RosbagStatus", self.models_source)
+        self.assertIn("response.decodedStatus?.displayText", self.source)
+
+    def test_secondary_controls_are_collapsed_and_arm_follows_height(self):
+        self.assertIn(
+            "@State private var showingSpotBaseFunctions = false",
+            self.content_source,
+        )
+        self.assertIn(
+            "@State private var showingTaskFunctions = false",
+            self.content_source,
+        )
+        self.assertIn(
+            "@State private var showingBodyRelativeWaypoint = false",
+            self.content_source,
+        )
+
+        spot_base = self.content_source.split(
+            "private var spotBaseFunctionsSection",
+            1,
+        )[1].split("private var taskFunctionsSection", 1)[0]
+        for section in ("batterySection", "platformSection", "rosbagSection"):
+            self.assertIn(section, spot_base)
+
+        task_functions = self.content_source.split(
+            "private var taskFunctionsSection",
+            1,
+        )[1].split("private var platformSection", 1)[0]
+        for section in (
+            "statusSection",
+            "commandSection",
+            "taskPlanSection",
+            "subtaskProofSection",
+            "stopControlsSection",
+        ):
+            self.assertIn(section, task_functions)
+
+        phone_controls = self.content_source.split(
+            "private var phoneControlSection",
+            1,
+        )[1].split("private var controlSourceController", 1)[0]
+        self.assertLess(
+            phone_controls.index("standingHeightController"),
+            phone_controls.index("armControlsSection"),
+        )
+        self.assertLess(
+            phone_controls.index("armControlsSection"),
+            phone_controls.index("driveJoystickController"),
+        )
+        self.assertLess(
+            phone_controls.index("driveJoystickController"),
+            phone_controls.index("directMovementController"),
+        )
+        self.assertLess(
+            phone_controls.index("directMovementController"),
+            phone_controls.index("rotationController"),
+        )
+        self.assertIn("waypointDisclosureController", phone_controls)
+
+    def test_direct_movement_buttons_target_point_three_meters_per_second(self):
+        self.assertIn(
+            "directMovementSpeedMetersPerSecond = 0.3",
+            self.config_source,
+        )
+        self.assertIn("directMovementForwardInput = 0.6", self.config_source)
+        self.assertIn("directMovementStrafeInput = 0.75", self.config_source)
+        self.assertIn(
+            "return (AppConfig.directMovementForwardInput, 0, 0)",
+            self.content_source,
+        )
+        self.assertIn(
+            "return (0, AppConfig.directMovementStrafeInput, 0)",
+            self.content_source,
+        )
+        self.assertIn("move at 0.3 m/s", self.content_source)
 
     def test_arm_response_callback_checks_generation_before_handling_result(self):
         callback = self.source.split(

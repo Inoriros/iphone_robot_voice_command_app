@@ -8,6 +8,10 @@ enum AppConfig {
     static let batteryPath = "/battery"
     static let platformStartPath = "/platform/start"
     static let platformStopPath = "/platform/stop"
+    static let rosbagStartPath = "/rosbag/start"
+    static let rosbagStopPath = "/rosbag/stop"
+    static let rosbagDeleteLatestPath = "/rosbag/delete_latest"
+    static let rosbagStatusPath = "/rosbag/status"
     static let manualControlPath = "/manual_control"
     static let manualVelocityPath = "/manual_velocity"
     static let bodyHeightPath = "/body_height"
@@ -21,6 +25,9 @@ enum AppConfig {
     static let minimumDriveJoystickThrottle = 1.0
     static let defaultDriveJoystickThrottle = 1.5
     static let maximumDriveJoystickThrottle = 2.0
+    static let directMovementSpeedMetersPerSecond = 0.3
+    static let directMovementForwardInput = 0.6
+    static let directMovementStrafeInput = 0.75
     static let minimumBodyHeightMeters = -0.20
     static let maximumBodyHeightMeters = 0.20
     static let armStatusBufferLimit = 100

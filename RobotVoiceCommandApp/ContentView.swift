@@ -10,10 +10,14 @@ private enum HeldRobotMotion: Equatable {
 
     var command: (forward: Double, strafe: Double, yaw: Double) {
         switch self {
-        case .forward: return (1, 0, 0)
-        case .backward: return (-1, 0, 0)
-        case .left: return (0, 1, 0)
-        case .right: return (0, -1, 0)
+        case .forward:
+            return (AppConfig.directMovementForwardInput, 0, 0)
+        case .backward:
+            return (-AppConfig.directMovementForwardInput, 0, 0)
+        case .left:
+            return (0, AppConfig.directMovementStrafeInput, 0)
+        case .right:
+            return (0, -AppConfig.directMovementStrafeInput, 0)
         case .turnLeft: return (0, 0, 1)
         case .turnRight: return (0, 0, -1)
         }
@@ -49,6 +53,10 @@ struct ContentView: View {
     @State private var allowNextArmCommandToPreempt = false
     @State private var showingStartPlatformConfirmation = false
     @State private var showingStopPlatformConfirmation = false
+    @State private var showingDeleteLatestRosbagConfirmation = false
+    @State private var showingSpotBaseFunctions = false
+    @State private var showingTaskFunctions = false
+    @State private var showingBodyRelativeWaypoint = false
     @AppStorage("manualControlAxisRangeMeters") private var waypointRangeMeters =
         AppConfig.defaultManualControlAxisRangeMeters
     @AppStorage("driveJoystickThrottleMultiplier")
@@ -93,6 +101,10 @@ struct ContentView: View {
 
     private var canControlPlatform: Bool {
         canSendControlCommand && !robot.isChangingPlatformState
+    }
+
+    private var canControlRosbag: Bool {
+        canSendControlCommand && !robot.isSendingRosbagCommand
     }
 
     private var canUsePhoneControl: Bool {
@@ -140,14 +152,8 @@ struct ContentView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     connectionSection
-                    platformSection
-                    batterySection
-                    statusSection
-                    commandSection
-                    taskPlanSection
-                    subtaskProofSection
-                    stopControlsSection
-                    armControlsSection
+                    spotBaseFunctionsSection
+                    taskFunctionsSection
                     phoneControlSection
                     feedbackSection
                 }
@@ -161,6 +167,11 @@ struct ContentView: View {
             .onChange(of: speech.transcript) { _, newTranscript in
                 if speech.isRecording {
                     commandText = newTranscript
+                }
+            }
+            .onChange(of: showingTaskFunctions) { _, isExpanded in
+                if !isExpanded && speech.isRecording {
+                    speech.stopRecording()
                 }
             }
             .onChange(of: robot.phoneControlEnabled) { _, enabled in
@@ -214,6 +225,7 @@ struct ContentView: View {
 
                 Button {
                     robot.connectStatusWebSocket(ip: jetsonIP)
+                    robot.refreshRosbagStatus(ip: jetsonIP, token: token)
                 } label: {
                     Label("Connect", systemImage: "antenna.radiowaves.left.and.right")
                 }
@@ -228,6 +240,52 @@ struct ContentView: View {
                 .accessibilityLabel("Disconnect")
             }
         }
+    }
+
+    private var spotBaseFunctionsSection: some View {
+        DisclosureGroup(isExpanded: $showingSpotBaseFunctions) {
+            VStack(alignment: .leading, spacing: 20) {
+                batterySection
+                platformSection
+                rosbagSection
+            }
+            .padding(.top, 16)
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                Label("Spot Base Functions", systemImage: "gearshape.2.fill")
+                    .font(.headline)
+                Text("Battery, SAIR platform, and rosbag recording")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var taskFunctionsSection: some View {
+        DisclosureGroup(isExpanded: $showingTaskFunctions) {
+            VStack(alignment: .leading, spacing: 20) {
+                statusSection
+                commandSection
+                taskPlanSection
+                subtaskProofSection
+                stopControlsSection
+            }
+            .padding(.top, 16)
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                Label("Task Functions", systemImage: "list.bullet.clipboard.fill")
+                    .font(.headline)
+                Text("Voice commands, task status, plans, proof, and task controls")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var platformSection: some View {
@@ -306,6 +364,82 @@ struct ContentView: View {
             Text(
                 "This interrupts the ROS launch in the dedicated tmux session. "
                     + "The bridge stays online so you can start the platform again."
+            )
+        }
+    }
+
+    private var rosbagSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Rosbag Recording")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    if robot.isSendingRosbagCommand {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "record.circle")
+                    }
+
+                    Text(
+                        robot.rosbagMessage
+                            ?? (robot.isSendingRosbagCommand
+                                ? "Contacting host rosbag manager…"
+                                : "Recording status not checked yet")
+                    )
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                    Spacer()
+                }
+
+                HStack(spacing: 12) {
+                    Button {
+                        robot.startRosbagRecording(ip: jetsonIP, token: token)
+                    } label: {
+                        Label("Start Recording", systemImage: "record.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .disabled(!canControlRosbag)
+
+                    Button {
+                        robot.stopRosbagRecording(ip: jetsonIP, token: token)
+                    } label: {
+                        Label("Stop Recording", systemImage: "stop.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!canControlRosbag)
+                }
+
+                Button(role: .destructive) {
+                    showingDeleteLatestRosbagConfirmation = true
+                } label: {
+                    Label("Delete Latest Recording", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(!canControlRosbag)
+            }
+            .padding()
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .alert(
+            "Delete latest rosbag?",
+            isPresented: $showingDeleteLatestRosbagConfirmation
+        ) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete Latest", role: .destructive) {
+                robot.deleteLatestRosbag(ip: jetsonIP, token: token)
+            }
+        } message: {
+            Text(
+                "This permanently deletes the latest recording managed on the "
+                    + "Jetson host under /home/zitongzhan/bags. This cannot be undone."
             )
         }
     }
@@ -745,11 +879,7 @@ struct ContentView: View {
 
                 Divider()
 
-                rotationController
-
-                Divider()
-
-                directMovementController
+                armControlsSection
 
                 Divider()
 
@@ -757,7 +887,15 @@ struct ContentView: View {
 
                 Divider()
 
-                waypointController
+                directMovementController
+
+                Divider()
+
+                rotationController
+
+                Divider()
+
+                waypointDisclosureController
 
                 if let message = robot.manualControlMessage {
                     Label(message, systemImage: "checkmark.circle.fill")
@@ -945,7 +1083,7 @@ struct ContentView: View {
 
     private var rotationController: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("2. Direct Rotation")
+            Text("4. Direct Rotation")
                 .font(.subheadline.weight(.semibold))
 
             Text("Press and hold Left or Right. Releasing the button stops rotation.")
@@ -964,7 +1102,7 @@ struct ContentView: View {
             Text("3. Direct Movement")
                 .font(.subheadline.weight(.semibold))
 
-            Text("Press and hold an arrow to move. Releasing it stops the robot.")
+            Text("Press and hold an arrow to move at 0.3 m/s. Releasing it stops the robot.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -1015,7 +1153,7 @@ struct ContentView: View {
 
     private var driveJoystickController: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("4. Drive Joystick")
+            Text("2. Drive Joystick")
                 .font(.subheadline.weight(.semibold))
 
             Text("Choose the maximum throttle, then drag up or down to move and left or right to steer. Diagonal drag moves and turns at the same time; releasing stops Spot.")
@@ -1128,11 +1266,18 @@ struct ContentView: View {
         }
     }
 
+    private var waypointDisclosureController: some View {
+        DisclosureGroup(isExpanded: $showingBodyRelativeWaypoint) {
+            waypointController
+                .padding(.top, 10)
+        } label: {
+            Label("5. Body-Relative Waypoint", systemImage: "map.fill")
+                .font(.subheadline.weight(.semibold))
+        }
+    }
+
     private var waypointController: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("5. Body-Relative Waypoint")
-                .font(.subheadline.weight(.semibold))
-
             Text("Tap the square. Spot will face along the line from the center to the target.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
