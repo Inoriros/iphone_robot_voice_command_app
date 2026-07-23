@@ -78,6 +78,19 @@ struct BatteryResponse: Codable {
     let message: String
 }
 
+struct PlatformControlRequest: Codable {
+    let token: String
+    let source: String
+}
+
+struct PlatformControlResponse: Codable {
+    let ok: Bool
+    let action: String
+    let running: Bool
+    let session: String
+    let message: String
+}
+
 struct ManualControlRequest: Codable {
     let x: Double
     let y: Double

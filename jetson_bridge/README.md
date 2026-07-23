@@ -6,6 +6,8 @@ It exposes:
 
 - `POST /command` for verified iPhone commands.
 - `POST /battery` for authenticated Spot battery checks.
+- `POST /platform/start` to launch SAIR_platform in a dedicated tmux session.
+- `POST /platform/stop` to stop that dedicated platform session.
 - `POST /manual_control` for authenticated body-relative phone motion goals.
 - `POST /manual_velocity` for authenticated press-and-hold velocity refreshes.
 - `POST /body_height` for authenticated standing-height offsets.
@@ -119,6 +121,44 @@ export SPOT_BATTERY_CHECK_SCRIPT="/path/to/spot_battery_check.sh"
 export SPOT_BATTERY_CHECK_TIMEOUT_SECONDS="20"
 ```
 
+The bridge can remain auto-started while the app manages SAIR_platform through:
+
+```http
+POST http://JETSON_IP:8080/platform/start
+POST http://JETSON_IP:8080/platform/stop
+```
+
+Both routes require the bridge token:
+
+```json
+{"token":"2001","source":"iphone"}
+```
+
+Start creates one tmux session named `sair_platform`, changes to
+`/root/SAIR_platform`, activates the `sair_stack` Conda environment, and runs
+`start_spot_platform.sh`. If the session already exists, the request succeeds
+without launching a duplicate. Stop sends `Ctrl-C` to the `platform` window and
+waits eight seconds for a graceful ROS shutdown before removing only that tmux
+session. It does not stop the bridge.
+
+Attach to the live platform output with:
+
+```bash
+tmux attach -t sair_platform
+```
+
+Do not launch another platform copy outside this dedicated session. Override
+the defaults before starting the bridge when necessary:
+
+```bash
+export SAIR_PLATFORM_DIRECTORY="/root/SAIR_platform"
+export SAIR_PLATFORM_START_SCRIPT="/root/SAIR_platform/start_spot_platform.sh"
+export SAIR_PLATFORM_CONDA_PROFILE="/opt/conda/etc/profile.d/conda.sh"
+export SAIR_PLATFORM_CONDA_ENV="sair_stack"
+export SAIR_PLATFORM_TMUX_SESSION="sair_platform"
+export SAIR_PLATFORM_STOP_TIMEOUT_SECONDS="8"
+```
+
 The task planner listens to `/task_control`:
 
 - `STOP_CURRENT_TASK`: cancel the whole active plan and set the coordinator idle.
@@ -196,6 +236,17 @@ Test the Spot battery endpoint:
 
 ```bash
 curl -X POST http://JETSON_IP:8080/battery \
+  -H "Content-Type: application/json" \
+  -d '{"token":"2001","source":"manual-test"}'
+```
+
+Test platform lifecycle control only when the robot stack is safe to change:
+
+```bash
+curl -X POST http://JETSON_IP:8080/platform/start \
+  -H "Content-Type: application/json" \
+  -d '{"token":"2001","source":"manual-test"}'
+curl -X POST http://JETSON_IP:8080/platform/stop \
   -H "Content-Type: application/json" \
   -d '{"token":"2001","source":"manual-test"}'
 ```

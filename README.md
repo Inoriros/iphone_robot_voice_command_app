@@ -16,6 +16,8 @@ iPhone app
 Jetson bridge
   - FastAPI POST /command
   - FastAPI POST /battery
+  - FastAPI POST /platform/start
+  - FastAPI POST /platform/stop
   - FastAPI POST /manual_control
   - FastAPI POST /manual_velocity
   - FastAPI POST /body_height
@@ -118,10 +120,11 @@ The iPhone app should use the Jetson's Wi-Fi IP address, for example:
 2. Enter the auth token. It must match `ROBOT_BRIDGE_TOKEN` on the Jetson.
 3. Tap **Connect** to open the status WebSocket.
 4. Tap **Check Battery** at any time to show Spot's current battery percentage.
-5. Tap **Start Listening** and speak a high-level robot command.
-6. Tap **Stop Listening**.
-7. Edit or verify the recognized text.
-8. Tap **Send**.
+5. Tap **Start Platform** to launch SAIR_platform in its dedicated tmux session.
+6. Tap **Start Listening** and speak a high-level robot command.
+7. Tap **Stop Listening**.
+8. Edit or verify the recognized text.
+9. Tap **Send**.
 
 The app never auto-sends partial speech recognition results. Commands are only sent after the user taps **Send**.
 
@@ -399,6 +402,40 @@ The bridge runs `/root/spot_battery_check.sh` by default and returns the parsed
 percentage. Set `SPOT_BATTERY_CHECK_SCRIPT` before starting the bridge if the
 script is installed elsewhere.
 
+The platform buttons use authenticated lifecycle endpoints:
+
+```text
+POST http://JETSON_IP:8080/platform/start
+POST http://JETSON_IP:8080/platform/stop
+```
+
+Both accept the same token payload:
+
+```json
+{"token":"2001","source":"iphone"}
+```
+
+Start creates the dedicated `sair_platform` tmux session in
+`/root/SAIR_platform`, activates `sair_stack`, and runs
+`start_spot_platform.sh`. Repeated Start requests do not create duplicates.
+Stop first sends `Ctrl-C` so ROS launch can shut down cleanly. If the session
+does not exit within eight seconds, the bridge removes only that tmux session.
+The auto-started bridge remains online.
+
+Inspect the running platform with:
+
+```bash
+tmux attach -t sair_platform
+```
+
+These controls manage only the dedicated session. Do not run another copy of
+`start_spot_platform.sh` in a different terminal or tmux session at the same
+time. The directory, script, Conda profile/environment, session name, and stop
+timeout can be overridden with `SAIR_PLATFORM_DIRECTORY`,
+`SAIR_PLATFORM_START_SCRIPT`, `SAIR_PLATFORM_CONDA_PROFILE`,
+`SAIR_PLATFORM_CONDA_ENV`, `SAIR_PLATFORM_TMUX_SESSION`, and
+`SAIR_PLATFORM_STOP_TIMEOUT_SECONDS` before starting the bridge.
+
 The app receives status from:
 
 ```text
@@ -487,6 +524,19 @@ Test the battery endpoint:
 
 ```bash
 curl -X POST http://JETSON_IP:8080/battery \
+  -H "Content-Type: application/json" \
+  -d '{"token":"2001","source":"manual-test"}'
+```
+
+Test the platform lifecycle endpoints only when it is safe to start or stop the
+robot stack:
+
+```bash
+curl -X POST http://JETSON_IP:8080/platform/start \
+  -H "Content-Type: application/json" \
+  -d '{"token":"2001","source":"manual-test"}'
+
+curl -X POST http://JETSON_IP:8080/platform/stop \
   -H "Content-Type: application/json" \
   -d '{"token":"2001","source":"manual-test"}'
 ```

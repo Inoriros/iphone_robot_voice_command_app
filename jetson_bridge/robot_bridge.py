@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import re
+import shlex
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -89,6 +90,25 @@ BATTERY_CHECK_SCRIPT = os.getenv(
 BATTERY_CHECK_TIMEOUT_SECONDS = float(
     os.getenv("SPOT_BATTERY_CHECK_TIMEOUT_SECONDS", "20")
 )
+PLATFORM_DIRECTORY = os.getenv(
+    "SAIR_PLATFORM_DIRECTORY",
+    "/root/SAIR_platform",
+)
+PLATFORM_START_SCRIPT = os.getenv(
+    "SAIR_PLATFORM_START_SCRIPT",
+    os.path.join(PLATFORM_DIRECTORY, "start_spot_platform.sh"),
+)
+PLATFORM_CONDA_PROFILE = os.getenv(
+    "SAIR_PLATFORM_CONDA_PROFILE",
+    "/opt/conda/etc/profile.d/conda.sh",
+)
+PLATFORM_CONDA_ENV = os.getenv("SAIR_PLATFORM_CONDA_ENV", "sair_stack")
+PLATFORM_TMUX_SESSION = os.getenv("SAIR_PLATFORM_TMUX_SESSION", "sair_platform")
+PLATFORM_STOP_TIMEOUT_SECONDS = max(
+    0.5,
+    float(os.getenv("SAIR_PLATFORM_STOP_TIMEOUT_SECONDS", "8")),
+)
+PLATFORM_COMMAND_TIMEOUT_SECONDS = 5.0
 MANUAL_CONTROL_AXIS_LIMIT_METERS = float(
     os.getenv("ROBOT_MANUAL_CONTROL_AXIS_LIMIT_METERS", "6")
 )
@@ -182,6 +202,19 @@ class BatteryRequest(BaseModel):
 class BatteryResponse(BaseModel):
     ok: bool
     percentage: float
+    message: str
+
+
+class PlatformControlRequest(BaseModel):
+    token: str
+    source: str = "iphone"
+
+
+class PlatformControlResponse(BaseModel):
+    ok: bool
+    action: Literal["start", "stop"]
+    running: bool
+    session: str
     message: str
 
 
@@ -779,6 +812,129 @@ async def read_spot_battery_percentage() -> float:
         ) from exc
 
 
+platform_control_lock = asyncio.Lock()
+
+
+def platform_start_shell_command() -> str:
+    conda_profile = shlex.quote(PLATFORM_CONDA_PROFILE)
+    conda_env = shlex.quote(PLATFORM_CONDA_ENV)
+    start_script = shlex.quote(PLATFORM_START_SCRIPT)
+    inner_command = (
+        f"source {conda_profile} && "
+        f"conda activate {conda_env} && "
+        f"exec /bin/bash {start_script}"
+    )
+    return f"exec /bin/bash -lc {shlex.quote(inner_command)}"
+
+
+async def run_tmux_command(*args: str) -> tuple[int, str, str]:
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "tmux",
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        raise RuntimeError("tmux is not installed or could not be started") from exc
+
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=PLATFORM_COMMAND_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError as exc:
+        process.kill()
+        await process.communicate()
+        raise RuntimeError("tmux command timed out") from exc
+
+    return (
+        int(process.returncode or 0),
+        stdout.decode("utf-8", errors="replace").strip(),
+        stderr.decode("utf-8", errors="replace").strip(),
+    )
+
+
+async def platform_tmux_session_exists() -> bool:
+    if re.fullmatch(r"[A-Za-z0-9_-]+", PLATFORM_TMUX_SESSION) is None:
+        raise RuntimeError("the configured tmux session name is invalid")
+
+    returncode, _stdout, stderr = await run_tmux_command(
+        "has-session",
+        "-t",
+        PLATFORM_TMUX_SESSION,
+    )
+    if returncode == 0:
+        return True
+    if returncode == 1:
+        return False
+    raise RuntimeError(stderr or "could not query the platform tmux session")
+
+
+def validate_platform_start_configuration() -> None:
+    if not os.path.isdir(PLATFORM_DIRECTORY):
+        raise RuntimeError(f"platform directory does not exist: {PLATFORM_DIRECTORY}")
+    if not os.path.isfile(PLATFORM_START_SCRIPT):
+        raise RuntimeError(f"platform start script does not exist: {PLATFORM_START_SCRIPT}")
+    if not os.path.isfile(PLATFORM_CONDA_PROFILE):
+        raise RuntimeError(f"Conda profile does not exist: {PLATFORM_CONDA_PROFILE}")
+
+
+async def start_platform_session() -> bool:
+    if await platform_tmux_session_exists():
+        return False
+
+    validate_platform_start_configuration()
+    returncode, stdout, stderr = await run_tmux_command(
+        "new-session",
+        "-d",
+        "-s",
+        PLATFORM_TMUX_SESSION,
+        "-n",
+        "platform",
+        "-c",
+        PLATFORM_DIRECTORY,
+        platform_start_shell_command(),
+    )
+    if returncode != 0:
+        raise RuntimeError(stderr or stdout or "tmux could not start the platform session")
+
+    await asyncio.sleep(0.4)
+    if not await platform_tmux_session_exists():
+        raise RuntimeError("the platform tmux session exited immediately")
+    return True
+
+
+async def stop_platform_session() -> tuple[bool, bool]:
+    if await platform_tmux_session_exists() is False:
+        return False, False
+
+    target = f"{PLATFORM_TMUX_SESSION}:platform"
+    returncode, stdout, stderr = await run_tmux_command(
+        "send-keys",
+        "-t",
+        target,
+        "C-c",
+    )
+    if returncode != 0 and await platform_tmux_session_exists():
+        raise RuntimeError(stderr or stdout or "tmux could not interrupt the platform")
+
+    deadline = asyncio.get_running_loop().time() + PLATFORM_STOP_TIMEOUT_SECONDS
+    while asyncio.get_running_loop().time() < deadline:
+        if await platform_tmux_session_exists() is False:
+            return True, False
+        await asyncio.sleep(0.2)
+
+    returncode, stdout, stderr = await run_tmux_command(
+        "kill-session",
+        "-t",
+        PLATFORM_TMUX_SESSION,
+    )
+    if returncode != 0 and await platform_tmux_session_exists():
+        raise RuntimeError(stderr or stdout or "tmux could not stop the platform session")
+    return True, True
+
+
 @app.get("/health")
 async def health() -> Dict[str, Any]:
     return {
@@ -797,6 +953,9 @@ async def health() -> Dict[str, Any]:
         "human_velocity_topic": HUMAN_VELOCITY_TOPIC,
         "manual_velocity_forward_limit": MANUAL_VELOCITY_FORWARD_LIMIT,
         "manual_control_axis_limit_m": MANUAL_CONTROL_AXIS_LIMIT_METERS,
+        "platform_directory": PLATFORM_DIRECTORY,
+        "platform_start_script": PLATFORM_START_SCRIPT,
+        "platform_tmux_session": PLATFORM_TMUX_SESSION,
         "subtask_status_topic": SUBTASK_STATUS_TOPIC,
         "task_planning_topic": TASK_PLANNING_TOPIC,
         "human_body_height_topic": HUMAN_BODY_HEIGHT_TOPIC,
@@ -1044,6 +1203,65 @@ async def battery(request: BatteryRequest) -> BatteryResponse:
         ok=True,
         percentage=percentage,
         message=f"Spot battery: {formatted_percentage}",
+    )
+
+
+@app.post("/platform/start", response_model=PlatformControlResponse)
+async def platform_start(request: PlatformControlRequest) -> PlatformControlResponse:
+    if request.token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    async with platform_control_lock:
+        try:
+            started = await start_platform_session()
+        except RuntimeError as exc:
+            logger.exception("could not start SAIR platform: %s", exc)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    message = (
+        f"Started SAIR_platform in tmux session '{PLATFORM_TMUX_SESSION}'."
+        if started
+        else f"SAIR_platform session '{PLATFORM_TMUX_SESSION}' is already running."
+    )
+    logger.info("%s Requested by %s.", message, request.source)
+    return PlatformControlResponse(
+        ok=True,
+        action="start",
+        running=True,
+        session=PLATFORM_TMUX_SESSION,
+        message=message,
+    )
+
+
+@app.post("/platform/stop", response_model=PlatformControlResponse)
+async def platform_stop(request: PlatformControlRequest) -> PlatformControlResponse:
+    if request.token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    async with platform_control_lock:
+        try:
+            was_running, forced = await stop_platform_session()
+        except RuntimeError as exc:
+            logger.exception("could not stop SAIR platform: %s", exc)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if not was_running:
+        message = f"SAIR_platform session '{PLATFORM_TMUX_SESSION}' is already stopped."
+    elif forced:
+        message = (
+            f"Stopped SAIR_platform and removed tmux session "
+            f"'{PLATFORM_TMUX_SESSION}' after the graceful timeout."
+        )
+    else:
+        message = f"Stopped SAIR_platform tmux session '{PLATFORM_TMUX_SESSION}'."
+
+    logger.info("%s Requested by %s.", message, request.source)
+    return PlatformControlResponse(
+        ok=True,
+        action="stop",
+        running=False,
+        session=PLATFORM_TMUX_SESSION,
+        message=message,
     )
 
 

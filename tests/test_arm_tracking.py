@@ -1,8 +1,10 @@
+import asyncio
 import importlib.util
 import sys
 import types
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, call, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -114,12 +116,139 @@ class BridgeArmHistoryTests(unittest.TestCase):
         )
 
 
+class BridgePlatformControlTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.bridge = load_bridge_module()
+
+    def test_start_uses_dedicated_tmux_session_and_working_directory(self):
+        session_exists = AsyncMock(side_effect=[False, True])
+        run_tmux = AsyncMock(return_value=(0, "", ""))
+
+        with (
+            patch.object(self.bridge, "platform_tmux_session_exists", session_exists),
+            patch.object(self.bridge, "run_tmux_command", run_tmux),
+            patch.object(self.bridge.asyncio, "sleep", AsyncMock()),
+        ):
+            started = asyncio.run(self.bridge.start_platform_session())
+
+        self.assertTrue(started)
+        run_tmux.assert_awaited_once_with(
+            "new-session",
+            "-d",
+            "-s",
+            self.bridge.PLATFORM_TMUX_SESSION,
+            "-n",
+            "platform",
+            "-c",
+            self.bridge.PLATFORM_DIRECTORY,
+            self.bridge.platform_start_shell_command(),
+        )
+
+    def test_start_does_not_duplicate_existing_session(self):
+        run_tmux = AsyncMock()
+        with (
+            patch.object(
+                self.bridge,
+                "platform_tmux_session_exists",
+                AsyncMock(return_value=True),
+            ),
+            patch.object(self.bridge, "run_tmux_command", run_tmux),
+        ):
+            started = asyncio.run(self.bridge.start_platform_session())
+
+        self.assertFalse(started)
+        run_tmux.assert_not_awaited()
+
+    def test_invalid_session_name_is_rejected_before_tmux_runs(self):
+        run_tmux = AsyncMock()
+        with (
+            patch.object(self.bridge, "PLATFORM_TMUX_SESSION", "other:0"),
+            patch.object(self.bridge, "run_tmux_command", run_tmux),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "session name is invalid"):
+                asyncio.run(self.bridge.platform_tmux_session_exists())
+
+        run_tmux.assert_not_awaited()
+
+    def test_stop_sends_ctrl_c_and_avoids_forced_kill_when_session_exits(self):
+        session_exists = AsyncMock(side_effect=[True, False])
+        run_tmux = AsyncMock(return_value=(0, "", ""))
+        with (
+            patch.object(self.bridge, "platform_tmux_session_exists", session_exists),
+            patch.object(self.bridge, "run_tmux_command", run_tmux),
+        ):
+            result = asyncio.run(self.bridge.stop_platform_session())
+
+        self.assertEqual(result, (True, False))
+        run_tmux.assert_awaited_once_with(
+            "send-keys",
+            "-t",
+            f"{self.bridge.PLATFORM_TMUX_SESSION}:platform",
+            "C-c",
+        )
+
+    def test_stop_forced_cleanup_targets_only_platform_session(self):
+        run_tmux = AsyncMock(return_value=(0, "", ""))
+        with (
+            patch.object(
+                self.bridge,
+                "platform_tmux_session_exists",
+                AsyncMock(return_value=True),
+            ),
+            patch.object(self.bridge, "run_tmux_command", run_tmux),
+            patch.object(self.bridge, "PLATFORM_STOP_TIMEOUT_SECONDS", 0.0),
+        ):
+            result = asyncio.run(self.bridge.stop_platform_session())
+
+        self.assertEqual(result, (True, True))
+        self.assertEqual(
+            run_tmux.await_args_list,
+            [
+                call(
+                    "send-keys",
+                    "-t",
+                    f"{self.bridge.PLATFORM_TMUX_SESSION}:platform",
+                    "C-c",
+                ),
+                call("kill-session", "-t", self.bridge.PLATFORM_TMUX_SESSION),
+            ],
+        )
+
+    def test_start_shell_command_activates_sair_stack_and_runs_script(self):
+        command = self.bridge.platform_start_shell_command()
+
+        self.assertIn("/bin/bash -lc", command)
+        self.assertIn("conda activate", command)
+        self.assertIn(self.bridge.PLATFORM_CONDA_ENV, command)
+        self.assertIn(self.bridge.PLATFORM_START_SCRIPT, command)
+
+
 class SwiftArmTrackingSourceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.source = (
             ROOT / "RobotVoiceCommandApp" / "RobotClient.swift"
         ).read_text()
+        cls.config_source = (
+            ROOT / "RobotVoiceCommandApp" / "AppConfig.swift"
+        ).read_text()
+        cls.content_source = (
+            ROOT / "RobotVoiceCommandApp" / "ContentView.swift"
+        ).read_text()
+        cls.models_source = (
+            ROOT / "RobotVoiceCommandApp" / "RobotModels.swift"
+        ).read_text()
+
+    def test_platform_buttons_use_authenticated_dedicated_routes(self):
+        self.assertIn('platformStartPath = "/platform/start"', self.config_source)
+        self.assertIn('platformStopPath = "/platform/stop"', self.config_source)
+        self.assertIn("PlatformControlRequest", self.models_source)
+        self.assertIn("func startPlatform", self.source)
+        self.assertIn("func stopPlatform", self.source)
+        self.assertIn('Label("Start Platform"', self.content_source)
+        self.assertIn('Label("Stop Platform"', self.content_source)
+        self.assertIn('.alert("Stop SAIR_platform?"', self.content_source)
 
     def test_arm_response_callback_checks_generation_before_handling_result(self):
         callback = self.source.split(

@@ -47,6 +47,7 @@ struct ContentView: View {
     @State private var selectedWaypointY = 0.0
     @State private var selectedBodyHeightMeters = 0.0
     @State private var allowNextArmCommandToPreempt = false
+    @State private var showingStopPlatformConfirmation = false
     @AppStorage("manualControlAxisRangeMeters") private var waypointRangeMeters =
         AppConfig.defaultManualControlAxisRangeMeters
     @AppStorage("driveJoystickThrottleMultiplier")
@@ -87,6 +88,10 @@ struct ContentView: View {
 
     private var canCheckBattery: Bool {
         canSendControlCommand && !robot.isCheckingBattery
+    }
+
+    private var canControlPlatform: Bool {
+        canSendControlCommand && !robot.isChangingPlatformState
     }
 
     private var canUsePhoneControl: Bool {
@@ -134,6 +139,7 @@ struct ContentView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     connectionSection
+                    platformSection
                     batterySection
                     statusSection
                     commandSection
@@ -220,6 +226,75 @@ struct ContentView: View {
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Disconnect")
             }
+        }
+    }
+
+    private var platformSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("SAIR Platform")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    if robot.isChangingPlatformState {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(
+                            systemName: robot.platformRunning == true
+                                ? "checkmark.circle.fill"
+                                : (robot.platformRunning == false
+                                    ? "stop.circle"
+                                    : "questionmark.circle")
+                        )
+                    }
+
+                    Text(
+                        robot.platformMessage
+                            ?? (robot.isChangingPlatformState
+                                ? "Updating SAIR_platform…"
+                                : "Platform state not checked yet")
+                    )
+                    .font(.subheadline)
+
+                    Spacer()
+                }
+
+                HStack(spacing: 12) {
+                    Button {
+                        robot.startPlatform(ip: jetsonIP, token: token)
+                    } label: {
+                        Label("Start Platform", systemImage: "play.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                    .disabled(!canControlPlatform || robot.platformRunning == true)
+
+                    Button(role: .destructive) {
+                        showingStopPlatformConfirmation = true
+                    } label: {
+                        Label("Stop Platform", systemImage: "stop.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canControlPlatform || robot.platformRunning == false)
+                }
+            }
+            .padding()
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .alert("Stop SAIR_platform?", isPresented: $showingStopPlatformConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Stop Platform", role: .destructive) {
+                robot.stopPlatform(ip: jetsonIP, token: token)
+            }
+        } message: {
+            Text(
+                "This interrupts the ROS launch in the dedicated tmux session. "
+                    + "The bridge stays online so you can start the platform again."
+            )
         }
     }
 

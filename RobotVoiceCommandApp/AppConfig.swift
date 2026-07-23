@@ -6,6 +6,8 @@ enum AppConfig {
     static let defaultPort = 8080
     static let commandPath = "/command"
     static let batteryPath = "/battery"
+    static let platformStartPath = "/platform/start"
+    static let platformStopPath = "/platform/stop"
     static let manualControlPath = "/manual_control"
     static let manualVelocityPath = "/manual_velocity"
     static let bodyHeightPath = "/body_height"
