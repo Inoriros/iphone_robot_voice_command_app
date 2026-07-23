@@ -136,12 +136,13 @@ Pause Subtask   sends PAUSE_CURRENT_SUBTASK
 The Jetson bridge forwards these controls on `/task_control` and publishes an
 immediate `/current_subtask` preemption marker for stop/pause commands.
 
-The app also has seven fixed arm controls:
+The app also has eight fixed arm controls:
 
 ```text
 Relax             sends ARM_RELAX
 Move to Button    sends ARM_BUTTON
 Press Button      sends ARM_PRESS
+observe_higher    sends ARM_OBSERVE_HIGHER
 Observe Bottle    sends ARM_OBSERVE_BOTTLE
 Grasp Bottle      sends ARM_GRASP_BOTTLE
 Release Bottle    sends ARM_RELEASE_BOTTLE
@@ -237,12 +238,13 @@ Fixed arm-action requests use the same endpoint. For example:
 }
 ```
 
-The bridge maps the seven command texts to `/current_arm_subtask` payloads:
+The bridge maps the eight command texts to `/current_arm_subtask` payloads:
 
 ```text
 ARM_RELAX   -> {"action_name":"move_to_relax","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_BUTTON  -> {"action_name":"move_to_button","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_PRESS   -> {"action_name":"move_to_press","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
+ARM_OBSERVE_HIGHER -> {"action_name":"move_to_high_button","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_OBSERVE_BOTTLE -> {"action_name":"move_to_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_GRASP_BOTTLE -> {"action_name":"grasp_water_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_RELEASE_BOTTLE -> {"action_name":"release_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}

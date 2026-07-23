@@ -534,6 +534,19 @@ struct ContentView: View {
 
                 GridRow {
                     Button {
+                        sendFixedCommand(AppConfig.armObserveHigherCommand)
+                    } label: {
+                        Label("observe_higher", systemImage: "eye.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .disabled(!canSendControlCommand)
+                    .gridCellColumns(2)
+                }
+
+                GridRow {
+                    Button {
                         sendFixedCommand(AppConfig.armObserveBottleCommand)
                     } label: {
                         Label("Observe Bottle", systemImage: "eye.fill")

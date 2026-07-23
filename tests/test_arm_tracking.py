@@ -103,6 +103,16 @@ class BridgeArmHistoryTests(unittest.TestCase):
             ["control", "arm-accepted", "arm-running", "arm-latest", "subtask"],
         )
 
+    def test_observe_higher_uses_exact_arm_action_payload(self):
+        self.assertEqual(
+            self.bridge.ARM_ACTION_COMMANDS["ARM_OBSERVE_HIGHER"],
+            {
+                "action_name": "move_to_high_button",
+                "start_pos": [0.0, 0.0, 0.0],
+                "target_pos": [0.0, 0.0, 0.0],
+            },
+        )
+
 
 class SwiftArmTrackingSourceTests(unittest.TestCase):
     @classmethod

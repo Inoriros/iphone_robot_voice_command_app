@@ -131,6 +131,11 @@ ARM_ACTION_COMMANDS = {
         "start_pos": [0.0, 0.0, 0.0],
         "target_pos": [0.0, 0.0, 0.0],
     },
+    "ARM_OBSERVE_HIGHER": {
+        "action_name": "move_to_high_button",
+        "start_pos": [0.0, 0.0, 0.0],
+        "target_pos": [0.0, 0.0, 0.0],
+    },
     "ARM_OBSERVE_BOTTLE": {
         "action_name": "move_to_bottle",
         "start_pos": [0.0, 0.0, 0.0],

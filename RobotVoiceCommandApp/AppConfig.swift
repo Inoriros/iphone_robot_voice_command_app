@@ -30,6 +30,7 @@ enum AppConfig {
     static let armRelaxCommand = "ARM_RELAX"
     static let armButtonCommand = "ARM_BUTTON"
     static let armPressCommand = "ARM_PRESS"
+    static let armObserveHigherCommand = "ARM_OBSERVE_HIGHER"
     static let armObserveBottleCommand = "ARM_OBSERVE_BOTTLE"
     static let armGraspBottleCommand = "ARM_GRASP_BOTTLE"
     static let armReleaseBottleCommand = "ARM_RELEASE_BOTTLE"
@@ -39,6 +40,7 @@ enum AppConfig {
         armRelaxCommand: "move_to_relax",
         armButtonCommand: "move_to_button",
         armPressCommand: "move_to_press",
+        armObserveHigherCommand: "move_to_high_button",
         armObserveBottleCommand: "move_to_bottle",
         armGraspBottleCommand: "grasp_water_bottle",
         armReleaseBottleCommand: "release_bottle",

@@ -38,7 +38,7 @@ The bridge decides what to do:
 
 - Normal text, for example `find the red fire extinguisher`, is published directly to `/scenario`.
 - `STOP_CURRENT_TASK`, `STOP_CURRENT_SUBTASK`, `PAUSE_CURRENT_SUBTASK`, and `RESUME_CURRENT_SUBTASK` are published to `/task_control`.
-- `ARM_RELAX`, `ARM_BUTTON`, `ARM_PRESS`, `ARM_OBSERVE_BOTTLE`,
+- `ARM_RELAX`, `ARM_BUTTON`, `ARM_PRESS`, `ARM_OBSERVE_HIGHER`, `ARM_OBSERVE_BOTTLE`,
   `ARM_GRASP_BOTTLE`, `ARM_RELEASE_BOTTLE`, and `ARM_PLACE_DOWN_BOTTLE` publish fixed action JSON to
   `/current_arm_subtask`.
 - Stop/pause commands also publish a non-active `/current_subtask` marker so following, VLM guidance, and navigation skills can preempt quickly. They do not stop the persistent exploration module or clear its history.
@@ -257,7 +257,7 @@ PAUSE_CURRENT_SUBTASK
 
 Robot-side consumers of `/current_subtask` should handle stop messages as high-priority stop requests and pause messages as subtask pause requests.
 
-The seven arm buttons send `ARM_RELAX`, `ARM_BUTTON`, `ARM_PRESS`,
+The eight arm buttons send `ARM_RELAX`, `ARM_BUTTON`, `ARM_PRESS`, `ARM_OBSERVE_HIGHER`,
 `ARM_OBSERVE_BOTTLE`, `ARM_GRASP_BOTTLE`, `ARM_RELEASE_BOTTLE`, and `ARM_PLACE_DOWN_BOTTLE` through
 `/command`. The bridge publishes these payloads:
 
@@ -265,6 +265,7 @@ The seven arm buttons send `ARM_RELAX`, `ARM_BUTTON`, `ARM_PRESS`,
 {"action_name":"move_to_relax","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"move_to_button","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"move_to_press","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
+{"action_name":"move_to_high_button","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"move_to_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"grasp_water_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"release_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
