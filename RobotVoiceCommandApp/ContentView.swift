@@ -254,7 +254,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Label("Spot Base Functions", systemImage: "gearshape.2.fill")
                     .font(.headline)
-                Text("Battery, SAIR platform, and rosbag recording")
+                Text("Battery, SAIR platform/navigation, and rosbag recording")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -290,7 +290,7 @@ struct ContentView: View {
 
     private var platformSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("SAIR Platform")
+            Text("SAIR Platform + Navigation")
                 .font(.headline)
 
             VStack(alignment: .leading, spacing: 12) {
@@ -311,8 +311,8 @@ struct ContentView: View {
                     Text(
                         robot.platformMessage
                             ?? (robot.isChangingPlatformState
-                                ? "Updating SAIR_platform…"
-                                : "Platform state not checked yet")
+                                ? "Updating SAIR platform/navigation…"
+                                : "Platform/navigation state not checked yet")
                     )
                     .font(.subheadline)
 
@@ -329,15 +329,15 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.green)
                     .disabled(!canControlPlatform || robot.platformRunning == true)
-                    .alert("Start SAIR_platform?", isPresented: $showingStartPlatformConfirmation) {
+                    .alert("Start SAIR platform and navigation?", isPresented: $showingStartPlatformConfirmation) {
                         Button("Cancel", role: .cancel) {}
-                        Button("Start Platform") {
+                        Button("Start Both") {
                             robot.startPlatform(ip: jetsonIP, token: token)
                         }
                     } message: {
                         Text(
-                            "This launches the robot ROS stack in the dedicated "
-                                + "sair_platform tmux session."
+                            "This launches SAIR_platform and SAIR_nav in dedicated "
+                                + "platform and nav windows of the sair_platform tmux session."
                         )
                     }
 
@@ -355,15 +355,15 @@ struct ContentView: View {
             .background(Color(.secondarySystemGroupedBackground))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .alert("Stop SAIR_platform?", isPresented: $showingStopPlatformConfirmation) {
+        .alert("Stop SAIR platform and navigation?", isPresented: $showingStopPlatformConfirmation) {
             Button("Cancel", role: .cancel) {}
-            Button("Stop Platform", role: .destructive) {
+            Button("Stop Both", role: .destructive) {
                 robot.stopPlatform(ip: jetsonIP, token: token)
             }
         } message: {
             Text(
-                "This interrupts the ROS launch in the dedicated tmux session. "
-                    + "The bridge stays online so you can start the platform again."
+                "This interrupts SAIR_nav and SAIR_platform in the dedicated tmux session. "
+                    + "The bridge stays online so you can start both again."
             )
         }
     }
@@ -758,6 +758,19 @@ struct ContentView: View {
                         sendFixedCommand(AppConfig.armObserveHigherCommand)
                     } label: {
                         Label("observe_higher", systemImage: "eye.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .disabled(!canSendControlCommand)
+                    .gridCellColumns(2)
+                }
+
+                GridRow {
+                    Button {
+                        sendFixedCommand(AppConfig.armFrontPushCommand)
+                    } label: {
+                        Label("move to frontPush", systemImage: "arrow.forward")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)

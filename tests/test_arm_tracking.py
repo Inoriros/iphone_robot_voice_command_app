@@ -118,6 +118,16 @@ class BridgeArmHistoryTests(unittest.TestCase):
             },
         )
 
+    def test_front_push_uses_exact_arm_action_payload(self):
+        self.assertEqual(
+            self.bridge.ARM_ACTION_COMMANDS["ARM_FRONT_PUSH"],
+            {
+                "action_name": "move_to_frontPush",
+                "start_pos": [0.0, 0.0, 0.0],
+                "target_pos": [0.0, 0.0, 0.0],
+            },
+        )
+
 
 class BridgeRosbagControlTests(unittest.TestCase):
     @classmethod
@@ -222,16 +232,31 @@ class BridgePlatformControlTests(unittest.TestCase):
 
         self.assertTrue(started)
         validate_configuration.assert_called_once_with()
-        run_tmux.assert_awaited_once_with(
-            "new-session",
-            "-d",
-            "-s",
-            self.bridge.PLATFORM_TMUX_SESSION,
-            "-n",
-            "platform",
-            "-c",
-            self.bridge.PLATFORM_DIRECTORY,
-            self.bridge.platform_start_shell_command(),
+        self.assertEqual(
+            run_tmux.await_args_list,
+            [
+                call(
+                    "new-session",
+                    "-d",
+                    "-s",
+                    self.bridge.PLATFORM_TMUX_SESSION,
+                    "-n",
+                    "platform",
+                    "-c",
+                    self.bridge.PLATFORM_DIRECTORY,
+                    self.bridge.platform_start_shell_command(),
+                ),
+                call(
+                    "new-window",
+                    "-t",
+                    f"{self.bridge.PLATFORM_TMUX_SESSION}:",
+                    "-n",
+                    "nav",
+                    "-c",
+                    self.bridge.NAV_DIRECTORY,
+                    self.bridge.nav_start_shell_command(),
+                ),
+            ],
         )
 
     def test_start_does_not_duplicate_existing_session(self):
@@ -248,6 +273,35 @@ class BridgePlatformControlTests(unittest.TestCase):
 
         self.assertFalse(started)
         run_tmux.assert_not_awaited()
+
+    def test_nav_start_failure_removes_partial_platform_session(self):
+        run_tmux = AsyncMock(
+            side_effect=[
+                (0, "", ""),
+                (1, "", "navigation failed"),
+                (0, "", ""),
+            ]
+        )
+        with (
+            patch.object(
+                self.bridge,
+                "platform_tmux_session_exists",
+                AsyncMock(return_value=False),
+            ),
+            patch.object(self.bridge, "run_tmux_command", run_tmux),
+            patch.object(self.bridge, "validate_platform_start_configuration"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "navigation failed"):
+                asyncio.run(self.bridge.start_platform_session())
+
+        self.assertEqual(
+            run_tmux.await_args_list[-1],
+            call(
+                "kill-session",
+                "-t",
+                self.bridge.PLATFORM_TMUX_SESSION,
+            ),
+        )
 
     def test_invalid_session_name_is_rejected_before_tmux_runs(self):
         run_tmux = AsyncMock()
@@ -270,11 +324,22 @@ class BridgePlatformControlTests(unittest.TestCase):
             result = asyncio.run(self.bridge.stop_platform_session())
 
         self.assertEqual(result, (True, False))
-        run_tmux.assert_awaited_once_with(
-            "send-keys",
-            "-t",
-            f"{self.bridge.PLATFORM_TMUX_SESSION}:platform",
-            "C-c",
+        self.assertEqual(
+            run_tmux.await_args_list,
+            [
+                call(
+                    "send-keys",
+                    "-t",
+                    f"{self.bridge.PLATFORM_TMUX_SESSION}:nav",
+                    "C-c",
+                ),
+                call(
+                    "send-keys",
+                    "-t",
+                    f"{self.bridge.PLATFORM_TMUX_SESSION}:platform",
+                    "C-c",
+                ),
+            ],
         )
 
     def test_stop_forced_cleanup_targets_only_platform_session(self):
@@ -297,6 +362,12 @@ class BridgePlatformControlTests(unittest.TestCase):
                 call(
                     "send-keys",
                     "-t",
+                    f"{self.bridge.PLATFORM_TMUX_SESSION}:nav",
+                    "C-c",
+                ),
+                call(
+                    "send-keys",
+                    "-t",
                     f"{self.bridge.PLATFORM_TMUX_SESSION}:platform",
                     "C-c",
                 ),
@@ -311,6 +382,16 @@ class BridgePlatformControlTests(unittest.TestCase):
         self.assertIn("conda activate", command)
         self.assertIn(self.bridge.PLATFORM_CONDA_ENV, command)
         self.assertIn(self.bridge.PLATFORM_START_SCRIPT, command)
+
+    def test_nav_shell_command_activates_sair_stack_and_runs_script(self):
+        command = self.bridge.nav_start_shell_command()
+
+        self.assertIn("/bin/bash -lc", command)
+        self.assertIn("conda activate", command)
+        self.assertIn(self.bridge.PLATFORM_CONDA_ENV, command)
+        self.assertIn(self.bridge.NAV_START_SCRIPT, command)
+        self.assertIn("export LOG_DIR=", command)
+        self.assertIn(self.bridge.NAV_LOG_DIRECTORY, command)
 
 
 class SwiftArmTrackingSourceTests(unittest.TestCase):
@@ -337,8 +418,21 @@ class SwiftArmTrackingSourceTests(unittest.TestCase):
         self.assertIn("func stopPlatform", self.source)
         self.assertIn('Label("Start Platform"', self.content_source)
         self.assertIn('Label("Stop Platform"', self.content_source)
-        self.assertIn('.alert("Start SAIR_platform?"', self.content_source)
-        self.assertIn('.alert("Stop SAIR_platform?"', self.content_source)
+        self.assertIn("SAIR Platform + Navigation", self.content_source)
+        self.assertIn('.alert("Start SAIR platform and navigation?"', self.content_source)
+        self.assertIn('.alert("Stop SAIR platform and navigation?"', self.content_source)
+
+    def test_front_push_arm_button_uses_exact_action_name(self):
+        self.assertIn('armFrontPushCommand = "ARM_FRONT_PUSH"', self.config_source)
+        self.assertIn(
+            'armFrontPushCommand: "move_to_frontPush"',
+            self.config_source,
+        )
+        self.assertIn('Label("move to frontPush"', self.content_source)
+        self.assertIn(
+            "sendFixedCommand(AppConfig.armFrontPushCommand)",
+            self.content_source,
+        )
 
     def test_rosbag_buttons_use_authenticated_bridge_routes(self):
         self.assertIn('rosbagStartPath = "/rosbag/start"', self.config_source)

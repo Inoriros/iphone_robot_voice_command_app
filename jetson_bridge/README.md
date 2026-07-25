@@ -6,8 +6,8 @@ It exposes:
 
 - `POST /command` for verified iPhone commands.
 - `POST /battery` for authenticated Spot battery checks.
-- `POST /platform/start` to launch SAIR_platform in a dedicated tmux session.
-- `POST /platform/stop` to stop that dedicated platform session.
+- `POST /platform/start` to launch SAIR_platform and SAIR_nav in one dedicated tmux session.
+- `POST /platform/stop` to stop both stacks in that dedicated session.
 - `POST /rosbag/start` to start host-side rosbag recording.
 - `POST /rosbag/stop` to stop host-side rosbag recording.
 - `POST /rosbag/delete_latest` to delete the latest host-side recording.
@@ -126,7 +126,7 @@ export SPOT_BATTERY_CHECK_SCRIPT="/path/to/spot_battery_check.sh"
 export SPOT_BATTERY_CHECK_TIMEOUT_SECONDS="20"
 ```
 
-The bridge can remain auto-started while the app manages SAIR_platform through:
+The bridge can remain auto-started while the app manages SAIR_platform and SAIR_nav through:
 
 ```http
 POST http://JETSON_IP:8080/platform/start
@@ -139,24 +139,35 @@ Both routes require the bridge token:
 {"token":"2001","source":"iphone"}
 ```
 
-Start creates one tmux session named `sair_platform`, changes to
-`/root/SAIR_platform`, activates the `sair_stack` Conda environment, and runs
-`start_spot_platform.sh`. If the session already exists, the request succeeds
-without launching a duplicate. Stop sends `Ctrl-C` to the `platform` window and
-waits eight seconds for a graceful ROS shutdown before removing only that tmux
-session. It does not stop the bridge.
+Start creates one tmux session named `sair_platform` with two windows. The
+`platform` window runs `/root/SAIR_platform/start_spot_platform.sh`; the `nav`
+window runs `/root/start_spot_nav_log.sh`. Both activate `sair_stack`.
+If the session already exists, the request succeeds without launching a
+duplicate. If nav startup fails, the new partial session is removed. Stop sends
+`Ctrl-C` to `nav` first and `platform` second, then waits eight seconds for both
+ROS launches to exit before removing only that tmux session if necessary. It
+does not stop the bridge.
 
-Attach to the live platform output with:
+The navigation wrapper mirrors output to tmux and to a timestamped
+`/root/spot_nav_logs/nav_YYYYmmdd_HHMMSS.log` file. It exports
+`SAIR_RUN_STAMP` and `SAIR_NAV_LOG` so navigation run metadata can reference the
+matching log.
+
+Attach to the live platform and navigation output with:
 
 ```bash
 tmux attach -t sair_platform
 ```
 
-Do not launch another platform copy outside this dedicated session. Override
-the defaults before starting the bridge when necessary:
+Use `Ctrl-B`, then `n` to switch between windows. Do not launch another platform or
+navigation copy outside this dedicated session. Override the defaults before
+starting the bridge when necessary:
 
 ```bash
 export SAIR_PLATFORM_DIRECTORY="/root/SAIR_platform"
+export SAIR_NAV_DIRECTORY="/root/SAIR_nav"
+export SAIR_NAV_START_SCRIPT="/root/start_spot_nav_log.sh"
+export SAIR_NAV_LOG_DIRECTORY="/root/spot_nav_logs"
 export SAIR_PLATFORM_START_SCRIPT="/root/SAIR_platform/start_spot_platform.sh"
 export SAIR_PLATFORM_CONDA_PROFILE="/opt/conda/etc/profile.d/conda.sh"
 export SAIR_PLATFORM_CONDA_ENV="sair_stack"
@@ -300,7 +311,7 @@ curl -X POST http://JETSON_IP:8080/battery \
   -d '{"token":"2001","source":"manual-test"}'
 ```
 
-Test platform lifecycle control only when the robot stack is safe to change:
+Test platform lifecycle control only when both robot stacks are safe to change:
 
 ```bash
 curl -X POST http://JETSON_IP:8080/platform/start \
@@ -368,8 +379,8 @@ PAUSE_CURRENT_SUBTASK
 
 Robot-side consumers of `/current_subtask` should handle stop messages as high-priority stop requests and pause messages as subtask pause requests.
 
-The eight arm buttons send `ARM_RELAX`, `ARM_BUTTON`, `ARM_PRESS`, `ARM_OBSERVE_HIGHER`,
-`ARM_OBSERVE_BOTTLE`, `ARM_GRASP_BOTTLE`, `ARM_RELEASE_BOTTLE`, and `ARM_PLACE_DOWN_BOTTLE` through
+The nine arm buttons send `ARM_RELAX`, `ARM_BUTTON`, `ARM_PRESS`, `ARM_OBSERVE_HIGHER`,
+`ARM_FRONT_PUSH`, `ARM_OBSERVE_BOTTLE`, `ARM_GRASP_BOTTLE`, `ARM_RELEASE_BOTTLE`, and `ARM_PLACE_DOWN_BOTTLE` through
 `/command`. The bridge publishes these payloads:
 
 ```text
@@ -377,6 +388,7 @@ The eight arm buttons send `ARM_RELAX`, `ARM_BUTTON`, `ARM_PRESS`, `ARM_OBSERVE_
 {"action_name":"move_to_button","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"move_to_press","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"move_to_high_button","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
+{"action_name":"move_to_frontPush","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"move_to_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"grasp_water_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"release_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}

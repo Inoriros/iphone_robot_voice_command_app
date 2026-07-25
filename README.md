@@ -125,7 +125,7 @@ The iPhone app should use the Jetson's Wi-Fi IP address, for example:
 1. Enter the Jetson IP address.
 2. Enter the auth token. It must match `ROBOT_BRIDGE_TOKEN` on the Jetson.
 3. Tap **Connect** to open the status WebSocket.
-4. Expand **Spot Base Functions** for battery, SAIR platform, and rosbag
+4. Expand **Spot Base Functions** for battery, SAIR platform/navigation, and rosbag
    controls. Rosbag deletion requires confirmation.
 5. Expand **Task Functions** for task status, voice commands, plans, proof, and
    task/subtask controls.
@@ -151,13 +151,14 @@ Pause Subtask   sends PAUSE_CURRENT_SUBTASK
 The Jetson bridge forwards these controls on `/task_control` and publishes an
 immediate `/current_subtask` preemption marker for stop/pause commands.
 
-The app also has eight fixed arm controls:
+The app also has nine fixed arm controls:
 
 ```text
 Relax             sends ARM_RELAX
 Move to Button    sends ARM_BUTTON
 Press Button      sends ARM_PRESS
 observe_higher    sends ARM_OBSERVE_HIGHER
+move to frontPush sends ARM_FRONT_PUSH
 Observe Bottle    sends ARM_OBSERVE_BOTTLE
 Grasp Bottle      sends ARM_GRASP_BOTTLE
 Release Bottle    sends ARM_RELEASE_BOTTLE
@@ -282,13 +283,14 @@ Fixed arm-action requests use the same endpoint. For example:
 }
 ```
 
-The bridge maps the eight command texts to `/current_arm_subtask` payloads:
+The bridge maps the nine command texts to `/current_arm_subtask` payloads:
 
 ```text
 ARM_RELAX   -> {"action_name":"move_to_relax","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_BUTTON  -> {"action_name":"move_to_button","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_PRESS   -> {"action_name":"move_to_press","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_OBSERVE_HIGHER -> {"action_name":"move_to_high_button","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
+ARM_FRONT_PUSH -> {"action_name":"move_to_frontPush","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_OBSERVE_BOTTLE -> {"action_name":"move_to_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_GRASP_BOTTLE -> {"action_name":"grasp_water_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_RELEASE_BOTTLE -> {"action_name":"release_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
@@ -456,12 +458,22 @@ Both accept the same token payload:
 {"token":"2001","source":"iphone"}
 ```
 
-Start creates the dedicated `sair_platform` tmux session in
-`/root/SAIR_platform`, activates `sair_stack`, and runs
-`start_spot_platform.sh`. Repeated Start requests do not create duplicates.
-Stop first sends `Ctrl-C` so ROS launch can shut down cleanly. If the session
-does not exit within eight seconds, the bridge removes only that tmux session.
-The auto-started bridge remains online.
+Start creates one dedicated `sair_platform` tmux session with two windows:
+
+- `platform` runs `/root/SAIR_platform/start_spot_platform.sh`.
+- `nav` runs `/root/start_spot_nav_log.sh`.
+
+Both activate `sair_stack`. Repeated Start requests do not create duplicates.
+If the nav window cannot be created, the bridge removes the partially started
+session. Stop sends `Ctrl-C` to `nav` first and `platform` second so both ROS
+launches can shut down cleanly. If the session does not exit within eight
+seconds, the bridge removes only that tmux session. The auto-started bridge
+remains online.
+
+The navigation wrapper writes timestamped output to
+`/root/spot_nav_logs/nav_YYYYmmdd_HHMMSS.log` while keeping the same output
+visible in tmux. It also exports `SAIR_RUN_STAMP` and `SAIR_NAV_LOG` for the
+navigation stack's run metadata.
 
 Inspect the running platform with:
 
@@ -469,11 +481,12 @@ Inspect the running platform with:
 tmux attach -t sair_platform
 ```
 
-These controls manage only the dedicated session. Do not run another copy of
-`start_spot_platform.sh` in a different terminal or tmux session at the same
-time. The directory, script, Conda profile/environment, session name, and stop
-timeout can be overridden with `SAIR_PLATFORM_DIRECTORY`,
-`SAIR_PLATFORM_START_SCRIPT`, `SAIR_PLATFORM_CONDA_PROFILE`,
+Use `Ctrl-B`, then `n` inside tmux to move between the two windows. These controls
+manage only the dedicated session. Do not run another copy of either startup
+script elsewhere at the same time. The directories, scripts, Conda
+profile/environment, session name, and stop timeout can be overridden with
+`SAIR_PLATFORM_DIRECTORY`, `SAIR_PLATFORM_START_SCRIPT`, `SAIR_NAV_DIRECTORY`,
+`SAIR_NAV_START_SCRIPT`, `SAIR_NAV_LOG_DIRECTORY`, `SAIR_PLATFORM_CONDA_PROFILE`,
 `SAIR_PLATFORM_CONDA_ENV`, `SAIR_PLATFORM_TMUX_SESSION`, and
 `SAIR_PLATFORM_STOP_TIMEOUT_SECONDS` before starting the bridge.
 
@@ -569,8 +582,8 @@ curl -X POST http://JETSON_IP:8080/battery \
   -d '{"token":"2001","source":"manual-test"}'
 ```
 
-Test the platform lifecycle endpoints only when it is safe to start or stop the
-robot stack:
+Test the platform lifecycle endpoints only when it is safe to start or stop
+both robot stacks:
 
 ```bash
 curl -X POST http://JETSON_IP:8080/platform/start \

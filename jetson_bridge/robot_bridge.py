@@ -128,6 +128,15 @@ PLATFORM_START_SCRIPT = os.getenv(
     "SAIR_PLATFORM_START_SCRIPT",
     os.path.join(PLATFORM_DIRECTORY, "start_spot_platform.sh"),
 )
+NAV_DIRECTORY = os.getenv(
+    "SAIR_NAV_DIRECTORY",
+    "/root/SAIR_nav",
+)
+NAV_START_SCRIPT = os.getenv(
+    "SAIR_NAV_START_SCRIPT",
+    "/root/start_spot_nav_log.sh",
+)
+NAV_LOG_DIRECTORY = os.getenv("SAIR_NAV_LOG_DIRECTORY", "/root/spot_nav_logs")
 PLATFORM_CONDA_PROFILE = os.getenv(
     "SAIR_PLATFORM_CONDA_PROFILE",
     "/opt/conda/etc/profile.d/conda.sh",
@@ -183,6 +192,11 @@ ARM_ACTION_COMMANDS = {
     },
     "ARM_OBSERVE_HIGHER": {
         "action_name": "move_to_high_button",
+        "start_pos": [0.0, 0.0, 0.0],
+        "target_pos": [0.0, 0.0, 0.0],
+    },
+    "ARM_FRONT_PUSH": {
+        "action_name": "move_to_frontPush",
         "start_pos": [0.0, 0.0, 0.0],
         "target_pos": [0.0, 0.0, 0.0],
     },
@@ -971,16 +985,35 @@ async def handle_rosbag_control(
 platform_control_lock = asyncio.Lock()
 
 
-def platform_start_shell_command() -> str:
+def start_shell_command(
+    start_script_path: str,
+    environment: Optional[Dict[str, str]] = None,
+) -> str:
     conda_profile = shlex.quote(PLATFORM_CONDA_PROFILE)
     conda_env = shlex.quote(PLATFORM_CONDA_ENV)
-    start_script = shlex.quote(PLATFORM_START_SCRIPT)
+    start_script = shlex.quote(start_script_path)
+    environment_commands = "".join(
+        f"export {name}={shlex.quote(value)} && "
+        for name, value in (environment or {}).items()
+    )
     inner_command = (
         f"source {conda_profile} && "
         f"conda activate {conda_env} && "
+        f"{environment_commands}"
         f"exec /bin/bash {start_script}"
     )
     return f"exec /bin/bash -lc {shlex.quote(inner_command)}"
+
+
+def platform_start_shell_command() -> str:
+    return start_shell_command(PLATFORM_START_SCRIPT)
+
+
+def nav_start_shell_command() -> str:
+    return start_shell_command(
+        NAV_START_SCRIPT,
+        {"LOG_DIR": NAV_LOG_DIRECTORY},
+    )
 
 
 async def run_tmux_command(*args: str) -> tuple[int, str, str]:
@@ -1034,6 +1067,10 @@ def validate_platform_start_configuration() -> None:
         raise RuntimeError(f"platform start script does not exist: {PLATFORM_START_SCRIPT}")
     if not os.path.isfile(PLATFORM_CONDA_PROFILE):
         raise RuntimeError(f"Conda profile does not exist: {PLATFORM_CONDA_PROFILE}")
+    if not os.path.isdir(NAV_DIRECTORY):
+        raise RuntimeError(f"navigation directory does not exist: {NAV_DIRECTORY}")
+    if not os.path.isfile(NAV_START_SCRIPT):
+        raise RuntimeError(f"navigation start script does not exist: {NAV_START_SCRIPT}")
 
 
 async def start_platform_session() -> bool:
@@ -1055,6 +1092,29 @@ async def start_platform_session() -> bool:
     if returncode != 0:
         raise RuntimeError(stderr or stdout or "tmux could not start the platform session")
 
+    returncode, stdout, stderr = await run_tmux_command(
+        "new-window",
+        "-t",
+        f"{PLATFORM_TMUX_SESSION}:",
+        "-n",
+        "nav",
+        "-c",
+        NAV_DIRECTORY,
+        nav_start_shell_command(),
+    )
+    if returncode != 0:
+        cleanup_code, _cleanup_stdout, cleanup_stderr = await run_tmux_command(
+            "kill-session",
+            "-t",
+            PLATFORM_TMUX_SESSION,
+        )
+        cleanup_detail = ""
+        if cleanup_code != 0:
+            cleanup_detail = f"; cleanup failed: {cleanup_stderr or 'unknown error'}"
+        raise RuntimeError(
+            (stderr or stdout or "tmux could not start SAIR_nav") + cleanup_detail
+        )
+
     await asyncio.sleep(0.4)
     if not await platform_tmux_session_exists():
         raise RuntimeError("the platform tmux session exited immediately")
@@ -1065,15 +1125,25 @@ async def stop_platform_session() -> tuple[bool, bool]:
     if await platform_tmux_session_exists() is False:
         return False, False
 
-    target = f"{PLATFORM_TMUX_SESSION}:platform"
-    returncode, stdout, stderr = await run_tmux_command(
-        "send-keys",
-        "-t",
-        target,
-        "C-c",
-    )
-    if returncode != 0 and await platform_tmux_session_exists():
-        raise RuntimeError(stderr or stdout or "tmux could not interrupt the platform")
+    interrupt_errors: List[str] = []
+    interrupted_window = False
+    for window_name in ("nav", "platform"):
+        returncode, stdout, stderr = await run_tmux_command(
+            "send-keys",
+            "-t",
+            f"{PLATFORM_TMUX_SESSION}:{window_name}",
+            "C-c",
+        )
+        if returncode == 0:
+            interrupted_window = True
+        else:
+            interrupt_errors.append(stderr or stdout or window_name)
+
+    if not interrupted_window and await platform_tmux_session_exists():
+        raise RuntimeError(
+            "tmux could not interrupt SAIR_platform or SAIR_nav: "
+            + "; ".join(interrupt_errors)
+        )
 
     deadline = asyncio.get_running_loop().time() + PLATFORM_STOP_TIMEOUT_SECONDS
     while asyncio.get_running_loop().time() < deadline:
@@ -1111,6 +1181,9 @@ async def health() -> Dict[str, Any]:
         "manual_control_axis_limit_m": MANUAL_CONTROL_AXIS_LIMIT_METERS,
         "platform_directory": PLATFORM_DIRECTORY,
         "platform_start_script": PLATFORM_START_SCRIPT,
+        "nav_directory": NAV_DIRECTORY,
+        "nav_start_script": NAV_START_SCRIPT,
+        "nav_log_directory": NAV_LOG_DIRECTORY,
         "platform_tmux_session": PLATFORM_TMUX_SESSION,
         "rosbag_services": dict(ROSBAG_SERVICES),
         "rosbag_status_topic": ROSBAG_STATUS_TOPIC,
@@ -1377,9 +1450,9 @@ async def platform_start(request: PlatformControlRequest) -> PlatformControlResp
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     message = (
-        f"Started SAIR_platform in tmux session '{PLATFORM_TMUX_SESSION}'."
+        f"Started SAIR_platform and SAIR_nav in tmux session '{PLATFORM_TMUX_SESSION}'."
         if started
-        else f"SAIR_platform session '{PLATFORM_TMUX_SESSION}' is already running."
+        else f"SAIR platform/navigation session '{PLATFORM_TMUX_SESSION}' is already running."
     )
     logger.info("%s Requested by %s.", message, request.source)
     return PlatformControlResponse(
@@ -1404,14 +1477,14 @@ async def platform_stop(request: PlatformControlRequest) -> PlatformControlRespo
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     if not was_running:
-        message = f"SAIR_platform session '{PLATFORM_TMUX_SESSION}' is already stopped."
+        message = f"SAIR platform/navigation session '{PLATFORM_TMUX_SESSION}' is already stopped."
     elif forced:
         message = (
-            f"Stopped SAIR_platform and removed tmux session "
+            f"Stopped SAIR_platform and SAIR_nav and removed tmux session "
             f"'{PLATFORM_TMUX_SESSION}' after the graceful timeout."
         )
     else:
-        message = f"Stopped SAIR_platform tmux session '{PLATFORM_TMUX_SESSION}'."
+        message = f"Stopped SAIR_platform and SAIR_nav tmux session '{PLATFORM_TMUX_SESSION}'."
 
     logger.info("%s Requested by %s.", message, request.source)
     return PlatformControlResponse(
