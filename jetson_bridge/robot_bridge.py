@@ -185,6 +185,9 @@ ARM_ACTION_COMMANDS = {
         "start_pos": [0.0, 0.0, 0.0],
         "target_pos": [0.0, 0.0, 0.0],
     },
+    "ARM_BUTTON_PUSH": {
+        "action_name": "buttonPush",
+    },
     "ARM_PRESS": {
         "action_name": "move_to_press",
         "start_pos": [0.0, 0.0, 0.0],
@@ -199,6 +202,9 @@ ARM_ACTION_COMMANDS = {
         "action_name": "move_to_frontPush",
         "start_pos": [0.0, 0.0, 0.0],
         "target_pos": [0.0, 0.0, 0.0],
+    },
+    "ARM_EXECUTE_FRONT_PUSH": {
+        "action_name": "frontPush",
     },
     "ARM_OBSERVE_BOTTLE": {
         "action_name": "move_to_bottle",

@@ -379,16 +379,20 @@ PAUSE_CURRENT_SUBTASK
 
 Robot-side consumers of `/current_subtask` should handle stop messages as high-priority stop requests and pause messages as subtask pause requests.
 
-The nine arm buttons send `ARM_RELAX`, `ARM_BUTTON`, `ARM_PRESS`, `ARM_OBSERVE_HIGHER`,
-`ARM_FRONT_PUSH`, `ARM_OBSERVE_BOTTLE`, `ARM_GRASP_BOTTLE`, `ARM_RELEASE_BOTTLE`, and `ARM_PLACE_DOWN_BOTTLE` through
+The eleven arm buttons send `ARM_RELAX`, `ARM_BUTTON`, `ARM_BUTTON_PUSH`,
+`ARM_PRESS`, `ARM_OBSERVE_HIGHER`, `ARM_FRONT_PUSH`, `ARM_EXECUTE_FRONT_PUSH`,
+`ARM_OBSERVE_BOTTLE`, `ARM_GRASP_BOTTLE`, `ARM_RELEASE_BOTTLE`, and
+`ARM_PLACE_DOWN_BOTTLE` through
 `/command`. The bridge publishes these payloads:
 
 ```text
 {"action_name":"move_to_relax","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"move_to_button","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
+{"action_name":"buttonPush"}
 {"action_name":"move_to_press","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"move_to_high_button","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"move_to_frontPush","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
+{"action_name":"frontPush"}
 {"action_name":"move_to_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"grasp_water_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 {"action_name":"release_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
@@ -399,6 +403,10 @@ The nine arm buttons send `ARM_RELAX`, `ARM_BUTTON`, `ARM_PRESS`, `ARM_OBSERVE_H
 `grasp_water_bottle`; `move_to_grasp` is not a valid trigger.
 `ARM_OBSERVE_BOTTLE` moves to the observation pose. `ARM_RELEASE_BOTTLE` publishes
 `release_bottle`, while `ARM_PLACE_DOWN_BOTTLE` performs the place-down sequence.
+The `buttonPush` and `frontPush` payloads intentionally contain only
+`action_name`.
+`ARM_FRONT_PUSH` remains the positioning command for compatibility with older
+app builds; the new push execution command is `ARM_EXECUTE_FRONT_PUSH`.
 
 `/current_arm_subtask` uses reliable, transient-local, keep-last depth-1 QoS.
 Each tap publishes once, and the app requires an active `/status` WebSocket before

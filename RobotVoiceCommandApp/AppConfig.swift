@@ -38,9 +38,11 @@ enum AppConfig {
     static let pauseCurrentSubtaskCommand = "PAUSE_CURRENT_SUBTASK"
     static let armRelaxCommand = "ARM_RELAX"
     static let armButtonCommand = "ARM_BUTTON"
+    static let armButtonPushCommand = "ARM_BUTTON_PUSH"
     static let armPressCommand = "ARM_PRESS"
     static let armObserveHigherCommand = "ARM_OBSERVE_HIGHER"
-    static let armFrontPushCommand = "ARM_FRONT_PUSH"
+    static let armMoveToFrontPushCommand = "ARM_FRONT_PUSH"
+    static let armFrontPushCommand = "ARM_EXECUTE_FRONT_PUSH"
     static let armObserveBottleCommand = "ARM_OBSERVE_BOTTLE"
     static let armGraspBottleCommand = "ARM_GRASP_BOTTLE"
     static let armReleaseBottleCommand = "ARM_RELEASE_BOTTLE"
@@ -49,9 +51,11 @@ enum AppConfig {
     private static let armActionNamesByCommand = [
         armRelaxCommand: "move_to_relax",
         armButtonCommand: "move_to_button",
+        armButtonPushCommand: "buttonPush",
         armPressCommand: "move_to_press",
         armObserveHigherCommand: "move_to_high_button",
-        armFrontPushCommand: "move_to_frontPush",
+        armMoveToFrontPushCommand: "move_to_frontPush",
+        armFrontPushCommand: "frontPush",
         armObserveBottleCommand: "move_to_bottle",
         armGraspBottleCommand: "grasp_water_bottle",
         armReleaseBottleCommand: "release_bottle",

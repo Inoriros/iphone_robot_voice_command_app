@@ -151,14 +151,16 @@ Pause Subtask   sends PAUSE_CURRENT_SUBTASK
 The Jetson bridge forwards these controls on `/task_control` and publishes an
 immediate `/current_subtask` preemption marker for stop/pause commands.
 
-The app also has nine fixed arm controls:
+The app also has eleven fixed arm controls:
 
 ```text
 Relax             sends ARM_RELAX
 Move to Button    sends ARM_BUTTON
+buttonPush         sends ARM_BUTTON_PUSH
 Press Button      sends ARM_PRESS
 observe_higher    sends ARM_OBSERVE_HIGHER
 move to frontPush sends ARM_FRONT_PUSH
+frontPush          sends ARM_EXECUTE_FRONT_PUSH
 Observe Bottle    sends ARM_OBSERVE_BOTTLE
 Grasp Bottle      sends ARM_GRASP_BOTTLE
 Release Bottle    sends ARM_RELEASE_BOTTLE
@@ -283,14 +285,16 @@ Fixed arm-action requests use the same endpoint. For example:
 }
 ```
 
-The bridge maps the nine command texts to `/current_arm_subtask` payloads:
+The bridge maps the eleven command texts to `/current_arm_subtask` payloads:
 
 ```text
 ARM_RELAX   -> {"action_name":"move_to_relax","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_BUTTON  -> {"action_name":"move_to_button","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
+ARM_BUTTON_PUSH -> {"action_name":"buttonPush"}
 ARM_PRESS   -> {"action_name":"move_to_press","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_OBSERVE_HIGHER -> {"action_name":"move_to_high_button","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_FRONT_PUSH -> {"action_name":"move_to_frontPush","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
+ARM_EXECUTE_FRONT_PUSH -> {"action_name":"frontPush"}
 ARM_OBSERVE_BOTTLE -> {"action_name":"move_to_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_GRASP_BOTTLE -> {"action_name":"grasp_water_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
 ARM_RELEASE_BOTTLE -> {"action_name":"release_bottle","start_pos":[0.0,0.0,0.0],"target_pos":[0.0,0.0,0.0]}
@@ -301,6 +305,10 @@ ARM_PLACE_DOWN_BOTTLE -> {"action_name":"place_down_bottle","start_pos":[0.0,0.0
 exactly `grasp_water_bottle`—never `move_to_grasp`. `ARM_OBSERVE_BOTTLE` moves
 the arm to the bottle observation pose. `ARM_RELEASE_BOTTLE` publishes
 `release_bottle`, while `ARM_PLACE_DOWN_BOTTLE` runs the place-down sequence.
+The `ARM_BUTTON_PUSH` and `ARM_EXECUTE_FRONT_PUSH` execution commands
+intentionally publish only `action_name`, matching their robot-side interfaces.
+Keeping `ARM_FRONT_PUSH` for `move_to_frontPush` preserves compatibility with
+older installed app builds.
 
 `/current_arm_subtask` uses reliable, transient-local, keep-last depth-1 QoS.
 Each button tap publishes its command once, and the live status WebSocket must be

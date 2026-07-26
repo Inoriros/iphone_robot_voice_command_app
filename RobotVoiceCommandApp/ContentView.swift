@@ -728,7 +728,10 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.blue)
                     .disabled(!canSendControlCommand)
+                    .gridCellColumns(2)
+                }
 
+                GridRow {
                     Button {
                         sendFixedCommand(AppConfig.armButtonCommand)
                     } label: {
@@ -737,6 +740,16 @@ struct ContentView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.blue)
+                    .disabled(!canSendControlCommand)
+
+                    Button {
+                        sendFixedCommand(AppConfig.armButtonPushCommand)
+                    } label: {
+                        Label("buttonPush", systemImage: "hand.tap.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
                     .disabled(!canSendControlCommand)
                 }
 
@@ -768,7 +781,7 @@ struct ContentView: View {
 
                 GridRow {
                     Button {
-                        sendFixedCommand(AppConfig.armFrontPushCommand)
+                        sendFixedCommand(AppConfig.armMoveToFrontPushCommand)
                     } label: {
                         Label("move to frontPush", systemImage: "arrow.forward")
                             .frame(maxWidth: .infinity)
@@ -776,7 +789,16 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.orange)
                     .disabled(!canSendControlCommand)
-                    .gridCellColumns(2)
+
+                    Button {
+                        sendFixedCommand(AppConfig.armFrontPushCommand)
+                    } label: {
+                        Label("frontPush", systemImage: "hand.point.right.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .disabled(!canSendControlCommand)
                 }
 
                 GridRow {

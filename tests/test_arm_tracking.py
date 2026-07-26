@@ -118,7 +118,7 @@ class BridgeArmHistoryTests(unittest.TestCase):
             },
         )
 
-    def test_front_push_uses_exact_arm_action_payload(self):
+    def test_move_to_front_push_uses_compatible_arm_action_payload(self):
         self.assertEqual(
             self.bridge.ARM_ACTION_COMMANDS["ARM_FRONT_PUSH"],
             {
@@ -126,6 +126,16 @@ class BridgeArmHistoryTests(unittest.TestCase):
                 "start_pos": [0.0, 0.0, 0.0],
                 "target_pos": [0.0, 0.0, 0.0],
             },
+        )
+
+    def test_push_actions_use_exact_minimal_payloads(self):
+        self.assertEqual(
+            self.bridge.ARM_ACTION_COMMANDS["ARM_EXECUTE_FRONT_PUSH"],
+            {"action_name": "frontPush"},
+        )
+        self.assertEqual(
+            self.bridge.ARM_ACTION_COMMANDS["ARM_BUTTON_PUSH"],
+            {"action_name": "buttonPush"},
         )
 
 
@@ -422,16 +432,57 @@ class SwiftArmTrackingSourceTests(unittest.TestCase):
         self.assertIn('.alert("Start SAIR platform and navigation?"', self.content_source)
         self.assertIn('.alert("Stop SAIR platform and navigation?"', self.content_source)
 
-    def test_front_push_arm_button_uses_exact_action_name(self):
-        self.assertIn('armFrontPushCommand = "ARM_FRONT_PUSH"', self.config_source)
+    def test_push_arm_buttons_use_exact_action_names(self):
         self.assertIn(
-            'armFrontPushCommand: "move_to_frontPush"',
+            'armMoveToFrontPushCommand = "ARM_FRONT_PUSH"',
             self.config_source,
         )
+        self.assertIn(
+            'armFrontPushCommand = "ARM_EXECUTE_FRONT_PUSH"',
+            self.config_source,
+        )
+        self.assertIn(
+            'armMoveToFrontPushCommand: "move_to_frontPush"',
+            self.config_source,
+        )
+        self.assertIn('armFrontPushCommand: "frontPush"', self.config_source)
+        self.assertIn(
+            'armButtonPushCommand = "ARM_BUTTON_PUSH"',
+            self.config_source,
+        )
+        self.assertIn('armButtonPushCommand: "buttonPush"', self.config_source)
         self.assertIn('Label("move to frontPush"', self.content_source)
+        self.assertIn('Label("frontPush"', self.content_source)
+        self.assertIn('Label("buttonPush"', self.content_source)
+        self.assertIn(
+            "sendFixedCommand(AppConfig.armMoveToFrontPushCommand)",
+            self.content_source,
+        )
         self.assertIn(
             "sendFixedCommand(AppConfig.armFrontPushCommand)",
             self.content_source,
+        )
+        self.assertIn(
+            "sendFixedCommand(AppConfig.armButtonPushCommand)",
+            self.content_source,
+        )
+
+        def grid_row_containing(marker: str) -> str:
+            marker_index = self.content_source.index(marker)
+            row_start = self.content_source.rfind("GridRow {", 0, marker_index)
+            row_end = self.content_source.find(
+                "\n                GridRow {",
+                marker_index,
+            )
+            return self.content_source[row_start:row_end]
+
+        self.assertIn(
+            "AppConfig.armButtonPushCommand",
+            grid_row_containing("AppConfig.armButtonCommand"),
+        )
+        self.assertIn(
+            "AppConfig.armFrontPushCommand",
+            grid_row_containing("AppConfig.armMoveToFrontPushCommand"),
         )
 
     def test_rosbag_buttons_use_authenticated_bridge_routes(self):
