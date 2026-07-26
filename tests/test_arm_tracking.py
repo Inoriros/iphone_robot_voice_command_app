@@ -485,6 +485,52 @@ class SwiftArmTrackingSourceTests(unittest.TestCase):
             grid_row_containing("AppConfig.armMoveToFrontPushCommand"),
         )
 
+    def test_arm_layout_and_bottle_controls_match_defaults(self):
+        self.assertIn(
+            "@State private var showingBottleArmControls = false",
+            self.content_source,
+        )
+
+        arm_controls = self.content_source.split(
+            "private var armControlsSection",
+            1,
+        )[1].split("private var phoneControlSection", 1)[0]
+        relax_index = arm_controls.index("AppConfig.armRelaxCommand")
+        observe_higher_index = arm_controls.index(
+            "AppConfig.armObserveHigherCommand"
+        )
+        move_to_button_index = arm_controls.index("AppConfig.armButtonCommand")
+        self.assertLess(relax_index, observe_higher_index)
+        self.assertLess(observe_higher_index, move_to_button_index)
+
+        observe_higher_button = arm_controls.split(
+            "sendFixedCommand(AppConfig.armObserveHigherCommand)",
+            1,
+        )[1].split(".disabled(!canSendControlCommand)", 1)[0]
+        self.assertIn(".tint(.blue)", observe_higher_button)
+
+        move_to_button = arm_controls.split(
+            "sendFixedCommand(AppConfig.armButtonCommand)",
+            1,
+        )[1].split(".disabled(!canSendControlCommand)", 1)[0]
+        self.assertIn(".tint(.orange)", move_to_button)
+
+        bottle_controls = arm_controls.split(
+            "DisclosureGroup(isExpanded: $showingBottleArmControls)",
+            1,
+        )[1].split(
+            "VStack(alignment: .leading, spacing: 8)",
+            1,
+        )[0]
+        for command in (
+            "armObserveBottleCommand",
+            "armGraspBottleCommand",
+            "armReleaseBottleCommand",
+            "armPlaceDownBottleCommand",
+        ):
+            self.assertIn(command, bottle_controls)
+        self.assertIn('Label("Bottle Controls"', bottle_controls)
+
     def test_rosbag_buttons_use_authenticated_bridge_routes(self):
         self.assertIn('rosbagStartPath = "/rosbag/start"', self.config_source)
         self.assertIn('rosbagStopPath = "/rosbag/stop"', self.config_source)
