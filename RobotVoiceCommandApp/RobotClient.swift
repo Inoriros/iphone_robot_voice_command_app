@@ -24,6 +24,9 @@ final class RobotClient: ObservableObject {
     @Published var platformRunning: Bool?
     @Published var platformMessage: String?
     @Published var isChangingPlatformState = false
+    @Published var odometryRunning: Bool?
+    @Published var odometryMessage: String?
+    @Published var isChangingOdometryState = false
     @Published var rosbagMessage: String?
     @Published var isSendingRosbagCommand = false
     @Published var controlSource = "unknown"
@@ -385,6 +388,90 @@ final class RobotClient: ObservableObject {
                     } else {
                         let action = start ? "starting" : "stopping"
                         self.lastError = "Jetson returned HTTP \(httpResponse.statusCode) while \(action) SAIR_platform."
+                    }
+                }
+            }
+        }.resume()
+    }
+
+    func startOdometry(ip: String, token: String) {
+        sendOdometryControl(ip: ip, token: token, start: true)
+    }
+
+    func stopOdometry(ip: String, token: String) {
+        sendOdometryControl(ip: ip, token: token, start: false)
+    }
+
+    private func sendOdometryControl(ip: String, token: String, start: Bool) {
+        guard !isChangingOdometryState else { return }
+
+        let trimmedIP = normalizedHost(from: ip)
+        lastError = nil
+        odometryMessage = nil
+
+        guard !trimmedIP.isEmpty else {
+            lastError = "Jetson IP is required."
+            return
+        }
+
+        guard let url = odometryControlURL(ip: trimmedIP, start: start) else {
+            lastError = "Jetson IP is invalid."
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            let body = OdometryControlRequest(
+                token: token,
+                source: AppConfig.commandSource
+            )
+            request.httpBody = try jsonEncoder.encode(body)
+        } catch {
+            lastError = "Could not encode odometry request: \(error.localizedDescription)"
+            return
+        }
+
+        isChangingOdometryState = true
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isChangingOdometryState = false
+
+                if let error {
+                    self.lastError = "Cannot reach Jetson at \(trimmedIP):\(AppConfig.defaultPort). \(error.localizedDescription)"
+                    return
+                }
+
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    self.lastError = "Jetson returned an invalid odometry response."
+                    return
+                }
+
+                switch httpResponse.statusCode {
+                case 200:
+                    guard let data,
+                          let response = try? self.jsonDecoder.decode(
+                              OdometryControlResponse.self,
+                              from: data
+                          ),
+                          response.ok else {
+                        self.lastError = "Jetson returned an unreadable odometry response."
+                        return
+                    }
+                    self.odometryRunning = response.running
+                    self.odometryMessage = response.message
+                case 401:
+                    self.lastError = "Invalid token. Please check the token on the Jetson bridge."
+                default:
+                    if let detail = self.bridgeErrorDetail(from: data) {
+                        self.lastError = detail
+                    } else {
+                        let action = start ? "starting" : "stopping"
+                        self.lastError = "Jetson returned HTTP \(httpResponse.statusCode) while \(action) odometry."
                     }
                 }
             }
@@ -1354,6 +1441,11 @@ final class RobotClient: ObservableObject {
 
     private func platformControlURL(ip: String, start: Bool) -> URL? {
         let path = start ? AppConfig.platformStartPath : AppConfig.platformStopPath
+        return URL(string: "http://\(ip):\(AppConfig.defaultPort)\(path)")
+    }
+
+    private func odometryControlURL(ip: String, start: Bool) -> URL? {
+        let path = start ? AppConfig.odometryStartPath : AppConfig.odometryStopPath
         return URL(string: "http://\(ip):\(AppConfig.defaultPort)\(path)")
     }
 

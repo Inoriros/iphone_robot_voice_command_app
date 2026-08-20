@@ -18,6 +18,8 @@ Jetson bridge
   - FastAPI POST /battery
   - FastAPI POST /platform/start
   - FastAPI POST /platform/stop
+  - FastAPI POST /odometry/start
+  - FastAPI POST /odometry/stop
   - FastAPI POST /rosbag/start
   - FastAPI POST /rosbag/stop
   - FastAPI POST /rosbag/delete_latest
@@ -125,8 +127,8 @@ The iPhone app should use the Jetson's Wi-Fi IP address, for example:
 1. Enter the Jetson IP address.
 2. Enter the auth token. It must match `ROBOT_BRIDGE_TOKEN` on the Jetson.
 3. Tap **Connect** to open the status WebSocket.
-4. Expand **Spot Base Functions** for battery, SAIR platform/navigation, and rosbag
-   controls. Rosbag deletion requires confirmation.
+4. Expand **Spot Base Functions** for battery, SAIR platform/navigation, Hesai
+   odometry, and rosbag controls. Rosbag deletion requires confirmation.
 5. Expand **Task Functions** for task status, voice commands, plans, proof, and
    task/subtask controls.
 6. Tap **Start Listening** and speak a high-level robot command.
@@ -497,6 +499,35 @@ profile/environment, session name, and stop timeout can be overridden with
 `SAIR_NAV_START_SCRIPT`, `SAIR_NAV_LOG_DIRECTORY`, `SAIR_PLATFORM_CONDA_PROFILE`,
 `SAIR_PLATFORM_CONDA_ENV`, `SAIR_PLATFORM_TMUX_SESSION`, and
 `SAIR_PLATFORM_STOP_TIMEOUT_SECONDS` before starting the bridge.
+
+The odometry buttons use separate authenticated lifecycle endpoints:
+
+```text
+POST http://JETSON_IP:8080/odometry/start
+POST http://JETSON_IP:8080/odometry/stop
+```
+
+Start creates the dedicated `sair_odometry` tmux session and its `odometry`
+window, then runs:
+
+```bash
+source /home/zitongzhan/hesai_ws/install/setup.bash && \
+  exec ros2 launch super_lio hesai.py rviz:=false
+```
+
+Repeated Start requests do not create duplicates. Stop sends `Ctrl-C` to the
+odometry window and waits up to eight seconds before removing only the
+`sair_odometry` session. It does not affect the bridge or the `sair_platform`
+session. Inspect live output with `tmux attach -t sair_odometry`.
+
+Override the defaults before starting the bridge when necessary:
+
+```bash
+export SAIR_ODOMETRY_DIRECTORY="/home/zitongzhan/hesai_ws"
+export SAIR_ODOMETRY_SETUP_SCRIPT="/home/zitongzhan/hesai_ws/install/setup.bash"
+export SAIR_ODOMETRY_TMUX_SESSION="sair_odometry"
+export SAIR_ODOMETRY_STOP_TIMEOUT_SECONDS="8"
+```
 
 The app receives status from:
 

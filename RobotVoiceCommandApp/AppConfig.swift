@@ -8,6 +8,8 @@ enum AppConfig {
     static let batteryPath = "/battery"
     static let platformStartPath = "/platform/start"
     static let platformStopPath = "/platform/stop"
+    static let odometryStartPath = "/odometry/start"
+    static let odometryStopPath = "/odometry/stop"
     static let rosbagStartPath = "/rosbag/start"
     static let rosbagStopPath = "/rosbag/stop"
     static let rosbagDeleteLatestPath = "/rosbag/delete_latest"

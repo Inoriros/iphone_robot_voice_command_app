@@ -91,6 +91,19 @@ struct PlatformControlResponse: Codable {
     let message: String
 }
 
+struct OdometryControlRequest: Codable {
+    let token: String
+    let source: String
+}
+
+struct OdometryControlResponse: Codable {
+    let ok: Bool
+    let action: String
+    let running: Bool
+    let session: String
+    let message: String
+}
+
 struct RosbagControlRequest: Codable {
     let token: String
     let source: String

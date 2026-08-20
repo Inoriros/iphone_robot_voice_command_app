@@ -8,6 +8,8 @@ It exposes:
 - `POST /battery` for authenticated Spot battery checks.
 - `POST /platform/start` to launch SAIR_platform and SAIR_nav in one dedicated tmux session.
 - `POST /platform/stop` to stop both stacks in that dedicated session.
+- `POST /odometry/start` to launch Hesai odometry in a dedicated tmux session.
+- `POST /odometry/stop` to stop only that odometry session.
 - `POST /rosbag/start` to start host-side rosbag recording.
 - `POST /rosbag/stop` to stop host-side rosbag recording.
 - `POST /rosbag/delete_latest` to delete the latest host-side recording.
@@ -175,6 +177,40 @@ export SAIR_PLATFORM_TMUX_SESSION="sair_platform"
 export SAIR_PLATFORM_STOP_TIMEOUT_SECONDS="8"
 ```
 
+## Hesai Odometry
+
+The app manages Hesai odometry independently through:
+
+```http
+POST http://JETSON_IP:8080/odometry/start
+POST http://JETSON_IP:8080/odometry/stop
+```
+
+Both routes use the same authenticated token payload as the platform routes.
+Start creates `sair_odometry:odometry` and runs:
+
+```bash
+source /home/zitongzhan/hesai_ws/install/setup.bash && \
+  exec ros2 launch super_lio hesai.py rviz:=false
+```
+
+Start is idempotent. Stop sends `Ctrl-C`, waits eight seconds for ROS to shut
+down, and removes only `sair_odometry` if a forced cleanup is required. Attach
+to its output with:
+
+```bash
+tmux attach -t sair_odometry
+```
+
+Override the defaults before starting the bridge when needed:
+
+```bash
+export SAIR_ODOMETRY_DIRECTORY="/home/zitongzhan/hesai_ws"
+export SAIR_ODOMETRY_SETUP_SCRIPT="/home/zitongzhan/hesai_ws/install/setup.bash"
+export SAIR_ODOMETRY_TMUX_SESSION="sair_odometry"
+export SAIR_ODOMETRY_STOP_TIMEOUT_SECONDS="8"
+```
+
 ## Host Rosbag Manager
 
 The bridge is only a ROS 2 service client. By default, its authenticated HTTP
@@ -318,6 +354,17 @@ curl -X POST http://JETSON_IP:8080/platform/start \
   -H "Content-Type: application/json" \
   -d '{"token":"2001","source":"manual-test"}'
 curl -X POST http://JETSON_IP:8080/platform/stop \
+  -H "Content-Type: application/json" \
+  -d '{"token":"2001","source":"manual-test"}'
+```
+
+Test odometry lifecycle control only when the sensor and robot are ready:
+
+```bash
+curl -X POST http://JETSON_IP:8080/odometry/start \
+  -H "Content-Type: application/json" \
+  -d '{"token":"2001","source":"manual-test"}'
+curl -X POST http://JETSON_IP:8080/odometry/stop \
   -H "Content-Type: application/json" \
   -d '{"token":"2001","source":"manual-test"}'
 ```

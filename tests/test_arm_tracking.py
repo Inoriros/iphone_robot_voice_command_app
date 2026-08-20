@@ -18,10 +18,14 @@ def load_bridge_module():
 
     class FastAPI:
         def __init__(self, *args, **kwargs):
-            pass
+            self.routes = []
 
-        def _route(self, *args, **kwargs):
-            return lambda function: function
+        def _route(self, path, *args, **kwargs):
+            def register(function):
+                self.routes.append(types.SimpleNamespace(path=path))
+                return function
+
+            return register
 
         get = _route
         post = _route
@@ -404,6 +408,103 @@ class BridgePlatformControlTests(unittest.TestCase):
         self.assertIn(self.bridge.NAV_LOG_DIRECTORY, command)
 
 
+class BridgeOdometryControlTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.bridge = load_bridge_module()
+
+    def test_authenticated_odometry_routes_are_registered(self):
+        route_paths = {route.path for route in self.bridge.app.routes}
+        self.assertIn("/odometry/start", route_paths)
+        self.assertIn("/odometry/stop", route_paths)
+
+    def test_start_uses_dedicated_odometry_tmux_session(self):
+        session_exists = AsyncMock(side_effect=[False, True])
+        run_tmux = AsyncMock(return_value=(0, "", ""))
+        with (
+            patch.object(self.bridge, "odometry_tmux_session_exists", session_exists),
+            patch.object(self.bridge, "run_tmux_command", run_tmux),
+            patch.object(self.bridge.asyncio, "sleep", AsyncMock()),
+            patch.object(
+                self.bridge,
+                "validate_odometry_start_configuration",
+            ) as validate_configuration,
+        ):
+            started = asyncio.run(self.bridge.start_odometry_session())
+
+        self.assertTrue(started)
+        validate_configuration.assert_called_once_with()
+        run_tmux.assert_awaited_once_with(
+            "new-session",
+            "-d",
+            "-s",
+            self.bridge.ODOMETRY_TMUX_SESSION,
+            "-n",
+            self.bridge.ODOMETRY_TMUX_WINDOW,
+            "-c",
+            self.bridge.ODOMETRY_DIRECTORY,
+            self.bridge.odometry_start_shell_command(),
+        )
+
+    def test_start_does_not_duplicate_existing_odometry_session(self):
+        run_tmux = AsyncMock()
+        with (
+            patch.object(
+                self.bridge,
+                "odometry_tmux_session_exists",
+                AsyncMock(return_value=True),
+            ),
+            patch.object(self.bridge, "run_tmux_command", run_tmux),
+        ):
+            started = asyncio.run(self.bridge.start_odometry_session())
+
+        self.assertFalse(started)
+        run_tmux.assert_not_awaited()
+
+    def test_stop_interrupts_only_odometry_window(self):
+        session_exists = AsyncMock(side_effect=[True, False])
+        run_tmux = AsyncMock(return_value=(0, "", ""))
+        with (
+            patch.object(self.bridge, "odometry_tmux_session_exists", session_exists),
+            patch.object(self.bridge, "run_tmux_command", run_tmux),
+        ):
+            result = asyncio.run(self.bridge.stop_odometry_session())
+
+        self.assertEqual(result, (True, False))
+        run_tmux.assert_awaited_once_with(
+            "send-keys",
+            "-t",
+            f"{self.bridge.ODOMETRY_TMUX_SESSION}:{self.bridge.ODOMETRY_TMUX_WINDOW}",
+            "C-c",
+        )
+
+    def test_forced_stop_kills_only_odometry_session(self):
+        run_tmux = AsyncMock(return_value=(0, "", ""))
+        with (
+            patch.object(
+                self.bridge,
+                "odometry_tmux_session_exists",
+                AsyncMock(return_value=True),
+            ),
+            patch.object(self.bridge, "run_tmux_command", run_tmux),
+            patch.object(self.bridge, "ODOMETRY_STOP_TIMEOUT_SECONDS", 0.0),
+        ):
+            result = asyncio.run(self.bridge.stop_odometry_session())
+
+        self.assertEqual(result, (True, True))
+        self.assertEqual(
+            run_tmux.await_args_list[-1],
+            call("kill-session", "-t", self.bridge.ODOMETRY_TMUX_SESSION),
+        )
+
+    def test_odometry_shell_command_matches_requested_launch(self):
+        command = self.bridge.odometry_start_shell_command()
+
+        self.assertIn("/bin/bash -lc", command)
+        self.assertIn(self.bridge.ODOMETRY_SETUP_SCRIPT, command)
+        self.assertIn("exec ros2 launch super_lio hesai.py rviz:=false", command)
+
+
 class SwiftArmTrackingSourceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -431,6 +532,21 @@ class SwiftArmTrackingSourceTests(unittest.TestCase):
         self.assertIn("SAIR Platform + Navigation", self.content_source)
         self.assertIn('.alert("Start SAIR platform and navigation?"', self.content_source)
         self.assertIn('.alert("Stop SAIR platform and navigation?"', self.content_source)
+
+    def test_odometry_buttons_use_authenticated_dedicated_routes(self):
+        self.assertIn('odometryStartPath = "/odometry/start"', self.config_source)
+        self.assertIn('odometryStopPath = "/odometry/stop"', self.config_source)
+        self.assertIn("OdometryControlRequest", self.models_source)
+        self.assertIn("OdometryControlResponse", self.models_source)
+        self.assertIn("func startOdometry", self.source)
+        self.assertIn("func stopOdometry", self.source)
+        self.assertIn('Label("Start Odometry"', self.content_source)
+        self.assertIn('Label("Stop Odometry"', self.content_source)
+        self.assertIn("odometrySection", self.content_source)
+        self.assertIn(
+            'exec ros2 launch super_lio hesai.py rviz:=false',
+            (ROOT / "jetson_bridge" / "robot_bridge.py").read_text(),
+        )
 
     def test_push_arm_buttons_use_exact_action_names(self):
         self.assertIn(
@@ -520,7 +636,7 @@ class SwiftArmTrackingSourceTests(unittest.TestCase):
             "private var spotBaseFunctionsSection",
             1,
         )[1].split("private var taskFunctionsSection", 1)[0]
-        for section in ("batterySection", "platformSection", "rosbagSection"):
+        for section in ("batterySection", "platformSection", "odometrySection", "rosbagSection"):
             self.assertIn(section, spot_base)
 
         task_functions = self.content_source.split(

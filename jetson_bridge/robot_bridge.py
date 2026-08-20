@@ -148,6 +148,17 @@ PLATFORM_STOP_TIMEOUT_SECONDS = max(
     float(os.getenv("SAIR_PLATFORM_STOP_TIMEOUT_SECONDS", "8")),
 )
 PLATFORM_COMMAND_TIMEOUT_SECONDS = 5.0
+ODOMETRY_DIRECTORY = os.getenv("SAIR_ODOMETRY_DIRECTORY", "/home/zitongzhan/hesai_ws")
+ODOMETRY_SETUP_SCRIPT = os.getenv(
+    "SAIR_ODOMETRY_SETUP_SCRIPT",
+    os.path.join(ODOMETRY_DIRECTORY, "install", "setup.bash"),
+)
+ODOMETRY_TMUX_SESSION = os.getenv("SAIR_ODOMETRY_TMUX_SESSION", "sair_odometry")
+ODOMETRY_TMUX_WINDOW = "odometry"
+ODOMETRY_STOP_TIMEOUT_SECONDS = max(
+    0.5,
+    float(os.getenv("SAIR_ODOMETRY_STOP_TIMEOUT_SECONDS", "8")),
+)
 MANUAL_CONTROL_AXIS_LIMIT_METERS = float(
     os.getenv("ROBOT_MANUAL_CONTROL_AXIS_LIMIT_METERS", "6")
 )
@@ -261,6 +272,19 @@ class PlatformControlRequest(BaseModel):
 
 
 class PlatformControlResponse(BaseModel):
+    ok: bool
+    action: Literal["start", "stop"]
+    running: bool
+    session: str
+    message: str
+
+
+class OdometryControlRequest(BaseModel):
+    token: str
+    source: str = "iphone"
+
+
+class OdometryControlResponse(BaseModel):
     ok: bool
     action: Literal["start", "stop"]
     running: bool
@@ -989,6 +1013,7 @@ async def handle_rosbag_control(
 
 
 platform_control_lock = asyncio.Lock()
+odometry_control_lock = asyncio.Lock()
 
 
 def start_shell_command(
@@ -1020,6 +1045,15 @@ def nav_start_shell_command() -> str:
         NAV_START_SCRIPT,
         {"LOG_DIR": NAV_LOG_DIRECTORY},
     )
+
+
+def odometry_start_shell_command() -> str:
+    setup_script = shlex.quote(ODOMETRY_SETUP_SCRIPT)
+    inner_command = (
+        f"source {setup_script} && "
+        "exec ros2 launch super_lio hesai.py rviz:=false"
+    )
+    return f"exec /bin/bash -lc {shlex.quote(inner_command)}"
 
 
 async def run_tmux_command(*args: str) -> tuple[int, str, str]:
@@ -1066,6 +1100,22 @@ async def platform_tmux_session_exists() -> bool:
     raise RuntimeError(stderr or "could not query the platform tmux session")
 
 
+async def odometry_tmux_session_exists() -> bool:
+    if re.fullmatch(r"[A-Za-z0-9_-]+", ODOMETRY_TMUX_SESSION) is None:
+        raise RuntimeError("the configured odometry tmux session name is invalid")
+
+    returncode, _stdout, stderr = await run_tmux_command(
+        "has-session",
+        "-t",
+        ODOMETRY_TMUX_SESSION,
+    )
+    if returncode == 0:
+        return True
+    if returncode == 1:
+        return False
+    raise RuntimeError(stderr or "could not query the odometry tmux session")
+
+
 def validate_platform_start_configuration() -> None:
     if not os.path.isdir(PLATFORM_DIRECTORY):
         raise RuntimeError(f"platform directory does not exist: {PLATFORM_DIRECTORY}")
@@ -1077,6 +1127,13 @@ def validate_platform_start_configuration() -> None:
         raise RuntimeError(f"navigation directory does not exist: {NAV_DIRECTORY}")
     if not os.path.isfile(NAV_START_SCRIPT):
         raise RuntimeError(f"navigation start script does not exist: {NAV_START_SCRIPT}")
+
+
+def validate_odometry_start_configuration() -> None:
+    if not os.path.isdir(ODOMETRY_DIRECTORY):
+        raise RuntimeError(f"odometry directory does not exist: {ODOMETRY_DIRECTORY}")
+    if not os.path.isfile(ODOMETRY_SETUP_SCRIPT):
+        raise RuntimeError(f"odometry setup script does not exist: {ODOMETRY_SETUP_SCRIPT}")
 
 
 async def start_platform_session() -> bool:
@@ -1167,6 +1224,60 @@ async def stop_platform_session() -> tuple[bool, bool]:
     return True, True
 
 
+async def start_odometry_session() -> bool:
+    if await odometry_tmux_session_exists():
+        return False
+
+    validate_odometry_start_configuration()
+    returncode, stdout, stderr = await run_tmux_command(
+        "new-session",
+        "-d",
+        "-s",
+        ODOMETRY_TMUX_SESSION,
+        "-n",
+        ODOMETRY_TMUX_WINDOW,
+        "-c",
+        ODOMETRY_DIRECTORY,
+        odometry_start_shell_command(),
+    )
+    if returncode != 0:
+        raise RuntimeError(stderr or stdout or "tmux could not start odometry")
+
+    await asyncio.sleep(0.4)
+    if not await odometry_tmux_session_exists():
+        raise RuntimeError("the odometry tmux session exited immediately")
+    return True
+
+
+async def stop_odometry_session() -> tuple[bool, bool]:
+    if await odometry_tmux_session_exists() is False:
+        return False, False
+
+    returncode, stdout, stderr = await run_tmux_command(
+        "send-keys",
+        "-t",
+        f"{ODOMETRY_TMUX_SESSION}:{ODOMETRY_TMUX_WINDOW}",
+        "C-c",
+    )
+    if returncode != 0 and await odometry_tmux_session_exists():
+        raise RuntimeError(stderr or stdout or "tmux could not interrupt odometry")
+
+    deadline = asyncio.get_running_loop().time() + ODOMETRY_STOP_TIMEOUT_SECONDS
+    while asyncio.get_running_loop().time() < deadline:
+        if await odometry_tmux_session_exists() is False:
+            return True, False
+        await asyncio.sleep(0.2)
+
+    returncode, stdout, stderr = await run_tmux_command(
+        "kill-session",
+        "-t",
+        ODOMETRY_TMUX_SESSION,
+    )
+    if returncode != 0 and await odometry_tmux_session_exists():
+        raise RuntimeError(stderr or stdout or "tmux could not stop odometry")
+    return True, True
+
+
 @app.get("/health")
 async def health() -> Dict[str, Any]:
     return {
@@ -1191,6 +1302,9 @@ async def health() -> Dict[str, Any]:
         "nav_start_script": NAV_START_SCRIPT,
         "nav_log_directory": NAV_LOG_DIRECTORY,
         "platform_tmux_session": PLATFORM_TMUX_SESSION,
+        "odometry_directory": ODOMETRY_DIRECTORY,
+        "odometry_setup_script": ODOMETRY_SETUP_SCRIPT,
+        "odometry_tmux_session": ODOMETRY_TMUX_SESSION,
         "rosbag_services": dict(ROSBAG_SERVICES),
         "rosbag_status_topic": ROSBAG_STATUS_TOPIC,
         "subtask_status_topic": SUBTASK_STATUS_TOPIC,
@@ -1498,6 +1612,65 @@ async def platform_stop(request: PlatformControlRequest) -> PlatformControlRespo
         action="stop",
         running=False,
         session=PLATFORM_TMUX_SESSION,
+        message=message,
+    )
+
+
+@app.post("/odometry/start", response_model=OdometryControlResponse)
+async def odometry_start(request: OdometryControlRequest) -> OdometryControlResponse:
+    if request.token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    async with odometry_control_lock:
+        try:
+            started = await start_odometry_session()
+        except RuntimeError as exc:
+            logger.exception("could not start Hesai odometry: %s", exc)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    message = (
+        f"Started Hesai odometry in tmux session '{ODOMETRY_TMUX_SESSION}'."
+        if started
+        else f"Hesai odometry session '{ODOMETRY_TMUX_SESSION}' is already running."
+    )
+    logger.info("%s Requested by %s.", message, request.source)
+    return OdometryControlResponse(
+        ok=True,
+        action="start",
+        running=True,
+        session=ODOMETRY_TMUX_SESSION,
+        message=message,
+    )
+
+
+@app.post("/odometry/stop", response_model=OdometryControlResponse)
+async def odometry_stop(request: OdometryControlRequest) -> OdometryControlResponse:
+    if request.token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    async with odometry_control_lock:
+        try:
+            was_running, forced = await stop_odometry_session()
+        except RuntimeError as exc:
+            logger.exception("could not stop Hesai odometry: %s", exc)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if not was_running:
+        message = f"Hesai odometry session '{ODOMETRY_TMUX_SESSION}' is already stopped."
+    elif forced:
+        message = (
+            f"Stopped Hesai odometry and removed tmux session "
+            f"'{ODOMETRY_TMUX_SESSION}' after the graceful timeout."
+        )
+    else:
+        message = f"Stopped Hesai odometry tmux session '{ODOMETRY_TMUX_SESSION}'."
+
+    logger.info("%s Requested by %s.", message, request.source)
+    return OdometryControlResponse(
+        ok=True,
+        action="stop",
+        running=False,
+        session=ODOMETRY_TMUX_SESSION,
         message=message,
     )
 

@@ -103,6 +103,10 @@ struct ContentView: View {
         canSendControlCommand && !robot.isChangingPlatformState
     }
 
+    private var canControlOdometry: Bool {
+        canSendControlCommand && !robot.isChangingOdometryState
+    }
+
     private var canControlRosbag: Bool {
         canSendControlCommand && !robot.isSendingRosbagCommand
     }
@@ -247,6 +251,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 20) {
                 batterySection
                 platformSection
+                odometrySection
                 rosbagSection
             }
             .padding(.top, 16)
@@ -254,7 +259,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Label("Spot Base Functions", systemImage: "gearshape.2.fill")
                     .font(.headline)
-                Text("Battery, SAIR platform/navigation, and rosbag recording")
+                Text("Battery, platform/navigation, odometry, and rosbag recording")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -365,6 +370,64 @@ struct ContentView: View {
                 "This interrupts SAIR_nav and SAIR_platform in the dedicated tmux session. "
                     + "The bridge stays online so you can start both again."
             )
+        }
+    }
+
+    private var odometrySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Hesai Odometry")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    if robot.isChangingOdometryState {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(
+                            systemName: robot.odometryRunning == true
+                                ? "checkmark.circle.fill"
+                                : (robot.odometryRunning == false
+                                    ? "stop.circle"
+                                    : "questionmark.circle")
+                        )
+                    }
+
+                    Text(
+                        robot.odometryMessage
+                            ?? (robot.isChangingOdometryState
+                                ? "Updating odometry…"
+                                : "Odometry state not checked yet")
+                    )
+                    .font(.subheadline)
+
+                    Spacer()
+                }
+
+                HStack(spacing: 12) {
+                    Button {
+                        robot.startOdometry(ip: jetsonIP, token: token)
+                    } label: {
+                        Label("Start Odometry", systemImage: "location.north.line.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                    .disabled(!canControlOdometry || robot.odometryRunning == true)
+
+                    Button(role: .destructive) {
+                        robot.stopOdometry(ip: jetsonIP, token: token)
+                    } label: {
+                        Label("Stop Odometry", systemImage: "stop.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canControlOdometry || robot.odometryRunning == false)
+                }
+            }
+            .padding()
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }
 
