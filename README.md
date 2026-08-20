@@ -157,10 +157,10 @@ The app also has eleven fixed arm controls:
 
 ```text
 Relax             sends ARM_RELAX
+observe_higher    sends ARM_OBSERVE_HIGHER
 Move to Button    sends ARM_BUTTON
 buttonPush         sends ARM_BUTTON_PUSH
 Press Button      sends ARM_PRESS
-observe_higher    sends ARM_OBSERVE_HIGHER
 move to frontPush sends ARM_FRONT_PUSH
 frontPush          sends ARM_EXECUTE_FRONT_PUSH
 Observe Bottle    sends ARM_OBSERVE_BOTTLE
@@ -168,6 +168,8 @@ Grasp Bottle      sends ARM_GRASP_BOTTLE
 Release Bottle    sends ARM_RELEASE_BOTTLE
 Place Down Bottle sends ARM_PLACE_DOWN_BOTTLE
 ```
+
+The four bottle controls start collapsed under **Bottle Controls**.
 
 The app receives live mode authority from `/spot/control_state`:
 

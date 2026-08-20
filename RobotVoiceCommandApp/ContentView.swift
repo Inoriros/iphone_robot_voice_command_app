@@ -57,6 +57,7 @@ struct ContentView: View {
     @State private var showingSpotBaseFunctions = false
     @State private var showingTaskFunctions = false
     @State private var showingBodyRelativeWaypoint = false
+    @State private var showingBottleArmControls = false
     @AppStorage("manualControlAxisRangeMeters") private var waypointRangeMeters =
         AppConfig.defaultManualControlAxisRangeMeters
     @AppStorage("driveJoystickThrottleMultiplier")
@@ -796,13 +797,26 @@ struct ContentView: View {
 
                 GridRow {
                     Button {
+                        sendFixedCommand(AppConfig.armObserveHigherCommand)
+                    } label: {
+                        Label("observe_higher", systemImage: "eye.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
+                    .disabled(!canSendControlCommand)
+                    .gridCellColumns(2)
+                }
+
+                GridRow {
+                    Button {
                         sendFixedCommand(AppConfig.armButtonCommand)
                     } label: {
                         Label("Move to Button", systemImage: "scope")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.blue)
+                    .tint(.orange)
                     .disabled(!canSendControlCommand)
 
                     Button {
@@ -821,19 +835,6 @@ struct ContentView: View {
                         sendFixedCommand(AppConfig.armPressCommand)
                     } label: {
                         Label("Press Button", systemImage: "hand.tap")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.orange)
-                    .disabled(!canSendControlCommand)
-                    .gridCellColumns(2)
-                }
-
-                GridRow {
-                    Button {
-                        sendFixedCommand(AppConfig.armObserveHigherCommand)
-                    } label: {
-                        Label("observe_higher", systemImage: "eye.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -863,52 +864,61 @@ struct ContentView: View {
                     .tint(.orange)
                     .disabled(!canSendControlCommand)
                 }
-
-                GridRow {
-                    Button {
-                        sendFixedCommand(AppConfig.armObserveBottleCommand)
-                    } label: {
-                        Label("Observe Bottle", systemImage: "eye.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.teal)
-                    .disabled(!canSendControlCommand)
-
-                    Button {
-                        sendFixedCommand(AppConfig.armGraspBottleCommand)
-                    } label: {
-                        Label("Grasp Bottle", systemImage: "waterbottle.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.teal)
-                    .disabled(!canSendControlCommand)
-                }
-
-                GridRow {
-                    Button {
-                        sendFixedCommand(AppConfig.armReleaseBottleCommand)
-                    } label: {
-                        Label("Release Bottle", systemImage: "hand.raised.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.teal)
-                    .disabled(!canSendControlCommand)
-
-                    Button {
-                        sendFixedCommand(AppConfig.armPlaceDownBottleCommand)
-                    } label: {
-                        Label("Place Down Bottle", systemImage: "arrow.down.to.line")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.teal)
-                    .disabled(!canSendControlCommand)
-                }
             }
             .disabled(!canSendArmCommand)
+
+            DisclosureGroup(isExpanded: $showingBottleArmControls) {
+                Grid(horizontalSpacing: 12, verticalSpacing: 12) {
+                    GridRow {
+                        Button {
+                            sendFixedCommand(AppConfig.armObserveBottleCommand)
+                        } label: {
+                            Label("Observe Bottle", systemImage: "eye.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.teal)
+                        .disabled(!canSendControlCommand)
+
+                        Button {
+                            sendFixedCommand(AppConfig.armGraspBottleCommand)
+                        } label: {
+                            Label("Grasp Bottle", systemImage: "waterbottle.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.teal)
+                        .disabled(!canSendControlCommand)
+                    }
+
+                    GridRow {
+                        Button {
+                            sendFixedCommand(AppConfig.armReleaseBottleCommand)
+                        } label: {
+                            Label("Release Bottle", systemImage: "hand.raised.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.teal)
+                        .disabled(!canSendControlCommand)
+
+                        Button {
+                            sendFixedCommand(AppConfig.armPlaceDownBottleCommand)
+                        } label: {
+                            Label("Place Down Bottle", systemImage: "arrow.down.to.line")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.teal)
+                        .disabled(!canSendControlCommand)
+                    }
+                }
+                .disabled(!canSendArmCommand)
+                .padding(.top, 12)
+            } label: {
+                Label("Bottle Controls", systemImage: "waterbottle.fill")
+                    .font(.subheadline.weight(.semibold))
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .top, spacing: 8) {
